@@ -1,10 +1,13 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
-use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
+use crate::adapter::inter_stream::{
+	InterReasoningChunk, InterStreamChunk, InterStreamChunkTool, InterStreamEnd, InterStreamEvent,
+};
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::AdapterKind;
-use crate::chat::ChatOptionsSet;
+use crate::chat::{ChatOptionsSet, ToolCall};
 use crate::{Error, ModelIden, Result};
 use reqwest_eventsource::{Event, EventSource};
+use serde::Deserialize;
 use serde_json::Value;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -18,6 +21,7 @@ pub struct OpenAIStreamer {
 	/// Flag to prevent polling the EventSource after a MessageStop event
 	done: bool,
 	captured_data: StreamerCapturedData,
+	partial_openai_tool_call: Option<OpenAIToolCall>,
 }
 
 impl OpenAIStreamer {
@@ -28,6 +32,7 @@ impl OpenAIStreamer {
 			done: false,
 			options: StreamerOptions::new(model_iden, options_set),
 			captured_data: Default::default(),
+			partial_openai_tool_call: None,
 		}
 	}
 }
@@ -45,6 +50,8 @@ impl futures::Stream for OpenAIStreamer {
 			match event {
 				Some(Ok(Event::Open)) => return Poll::Ready(Some(Ok(InterStreamEvent::Start))),
 				Some(Ok(Event::Message(message))) => {
+					tracing::trace!("Message: {:?}", message);
+
 					// -- End Message
 					// According to OpenAI Spec, this is the end message
 					if message.data == "[DONE]" {
@@ -58,10 +65,19 @@ impl futures::Stream for OpenAIStreamer {
 							None
 						};
 
+						// if there is still a tool call that was in progress, now is completed, so return it.
+						if self.options.capture_tools {
+							if let Some(tool) = self.partial_openai_tool_call.take() {
+								let tool: ToolCall = tool.into();
+								self.captured_data.tools.push(tool.clone());
+							}
+						}
+
 						let inter_stream_end = InterStreamEnd {
 							captured_usage,
 							captured_content: self.captured_data.content.take(),
 							captured_reasoning_content: self.captured_data.reasoning_content.take(),
+							captured_tools: self.captured_data.tools.clone(),
 						};
 
 						return Poll::Ready(Some(Ok(InterStreamEvent::End(inter_stream_end))));
@@ -75,18 +91,15 @@ impl futures::Stream for OpenAIStreamer {
 							serde_error,
 						})?;
 
-					let first_choice: Option<Value> = message_data.x_take("/choices/0").ok();
-
 					let adapter_kind = self.options.model_iden.adapter_kind;
-
 					// If we have a first choice, then it's a normal message
-					if let Some(mut first_choice) = first_choice {
+					if let Ok(Some(first_choice)) = message_data.x_take::<Option<Value>>("/choices/0") {
 						// -- Finish Reason
 						// If finish_reason exists, it's the end of this choice.
 						// Since we support only a single choice, we can proceed,
 						// as there might be other messages, and the last one contains data: `[DONE]`
 						// NOTE: xAI has no `finish_reason` when not finished, so, need to just account for both null/absent
-						if let Ok(_finish_reason) = first_choice.x_take::<String>("finish_reason") {
+						if let Ok(_finish_reason) = first_choice.clone().x_take::<String>("finish_reason") {
 							// NOTE: For Groq, the usage is captured when finish_reason indicates stopping, and in the `/x_groq/usage`
 							if self.options.capture_usage {
 								match adapter_kind {
@@ -112,7 +125,7 @@ impl futures::Stream for OpenAIStreamer {
 						}
 						// -- Content
 						// If there is no finish_reason but there is some content, we can get the delta content and send the Internal Stream Event
-						else if let Some(content) = first_choice.x_take::<Option<String>>("/delta/content")? {
+						if let Ok(Some(content)) = first_choice.clone().x_take::<Option<String>>("/delta/content") {
 							// Add to the captured_content if chat options allow it
 							if self.options.capture_content {
 								match self.captured_data.content {
@@ -122,11 +135,56 @@ impl futures::Stream for OpenAIStreamer {
 							}
 
 							// Return the Event
-							return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(content))));
+							return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(InterStreamChunk::Content(content)))));
+						}
+
+						// -- Tool Call
+						// there will be always only one tool_call during streaming
+						if let Ok(Some(tool)) =
+							first_choice.clone().x_take::<Option<OpenAIToolCall>>("/delta/tool_calls/0")
+						{
+							// Example of a tool call event:
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"call_VkT1Z57SU75JNIOCxzGZnYVd","type":"function","function":{"name":"get_weather","arguments":""}}],"refusal":null},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"city"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Tokyo"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"country"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"Japan"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\",\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"unit"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\":\""}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"C"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"}"}}]},"logprobs":null,"finish_reason":null}]}"
+							// "{"id":"chatcmpl-B7jpM7pmGIMXiYc8vnkfOTZQzC19e","object":"chat.completion.chunk","created":1741184156,"model":"gpt-4o-mini-2024-07-18","service_tier":"default","system_fingerprint":"fp_06737a9306","choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"tool_calls"}]}"
+							// [DONE]
+
+							if let Some(mut p) = self.partial_openai_tool_call.take() {
+								if tool.index == p.index {
+									p.id.push_str(tool.id.as_str());
+									p.function.name.push_str(tool.function.name.as_str());
+									p.function.arguments.push_str(tool.function.arguments.as_str());
+									self.partial_openai_tool_call.replace(p);
+								} else {
+									self.partial_openai_tool_call.replace(tool.clone());
+
+									if self.options.capture_tools {
+										self.captured_data.tools.push(p.clone().into());
+									}
+								}
+							} else {
+								self.partial_openai_tool_call.replace(tool.clone());
+							}
+
+							// proceed with the next event
+							return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(tool.into()))));
 						}
 						// -- Reasoning Content
-						else if let Some(reasoning_content) =
-							first_choice.x_take::<Option<String>>("/delta/reasoning_content")?
+
+						if let Ok(Some(reasoning_content)) =
+							first_choice.clone().x_take::<Option<String>>("/delta/reasoning_content")
 						{
 							// Add to the captured_content if chat options allow it
 							if self.options.capture_reasoning_content {
@@ -137,13 +195,13 @@ impl futures::Stream for OpenAIStreamer {
 							}
 
 							// Return the Event
-							return Poll::Ready(Some(Ok(InterStreamEvent::ReasoningChunk(reasoning_content))));
+							return Poll::Ready(Some(Ok(InterStreamEvent::ReasoningChunk(
+								InterReasoningChunk::Content(reasoning_content),
+							))));
 						}
+
 						// If we do not have content, then log a trace message
-						else {
-							// TODO: use tracing debug
-							tracing::warn!("EMPTY CHOICE CONTENT");
-						}
+						tracing::warn!("EMPTY CHOICE CONTENT");
 					}
 					// -- Usage message
 					else {
@@ -170,5 +228,92 @@ impl futures::Stream for OpenAIStreamer {
 			}
 		}
 		Poll::Pending
+	}
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct OpenAIToolCallFunction {
+	#[serde(default)]
+	name: String,
+	#[serde(default)]
+	arguments: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct OpenAIToolCall {
+	index: usize,
+	#[serde(default)]
+	id: String,
+	#[serde(default)]
+	function: OpenAIToolCallFunction,
+}
+
+impl From<OpenAIToolCall> for InterStreamChunk {
+	fn from(tool: OpenAIToolCall) -> Self {
+		InterStreamChunk::Tool(tool.index, tool.into())
+	}
+}
+
+impl From<OpenAIToolCall> for InterStreamChunkTool {
+	fn from(tool: OpenAIToolCall) -> Self {
+		InterStreamChunkTool {
+			id: tool.id,
+			name: tool.function.name,
+			arguments: tool.function.arguments,
+		}
+	}
+}
+
+impl From<OpenAIToolCall> for ToolCall {
+	fn from(tool: OpenAIToolCall) -> Self {
+		ToolCall {
+			call_id: tool.id.clone(),
+			fn_name: tool.function.name.clone(),
+			fn_arguments: serde_json::from_str(&tool.function.arguments).unwrap_or_default(),
+		}
+	}
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+	#[test]
+	fn test_deserialize_tool_call() {
+		let tool_call = r#"{"index":0,"id":"call_VkT1Z57SU75JNIOCxzGZnYVd","type":"function","function":{"name":"get_weather","arguments":""}}"#;
+		let tool_call: OpenAIToolCall = serde_json::from_str(tool_call).unwrap();
+		assert_eq!(tool_call.index, 0);
+		assert_eq!(tool_call.id, "call_VkT1Z57SU75JNIOCxzGZnYVd");
+		assert_eq!(tool_call.function.name, "get_weather");
+		assert_eq!(tool_call.function.arguments, "");
+	}
+
+	#[test]
+	fn test_deserialize_tool_call_function() {
+		let tool_call_function = r#"{"name":"get_weather","arguments":""}"#;
+		let tool_call_function: OpenAIToolCallFunction = serde_json::from_str(tool_call_function).unwrap();
+		assert_eq!(tool_call_function.name, "get_weather");
+		assert_eq!(tool_call_function.arguments, "");
+	}
+
+	#[test]
+	fn test_deserialize_tool_call_function_with_arguments() {
+		let tool_call_function =
+			r#"{"name":"get_weather","arguments":"{\"city\":\"Tokyo\",\"country\":\"Japan\",\"unit\":\"C\"}"}"#;
+		let tool_call_function: OpenAIToolCallFunction = serde_json::from_str(tool_call_function).unwrap();
+		assert_eq!(tool_call_function.name, "get_weather");
+		assert_eq!(
+			tool_call_function.arguments,
+			"{\"city\":\"Tokyo\",\"country\":\"Japan\",\"unit\":\"C\"}"
+		);
+	}
+
+	#[test]
+	fn test_partial_deserialize_tool() {
+		let tool_call = r#"{"index":0,"function":{"arguments":"{\""}}"#;
+		let tool_call: OpenAIToolCall = serde_json::from_str(tool_call).unwrap();
+		assert_eq!(tool_call.index, 0);
+		assert_eq!(tool_call.id, "");
+		assert_eq!(tool_call.function.name, "");
+		assert_eq!(tool_call.function.arguments, "{\"");
 	}
 }

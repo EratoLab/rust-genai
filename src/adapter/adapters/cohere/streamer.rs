@@ -1,6 +1,6 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::cohere::CohereAdapter;
-use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
+use crate::adapter::inter_stream::{InterStreamChunk, InterStreamEnd, InterStreamEvent};
 use crate::chat::ChatOptionsSet;
 use crate::webc::WebStream;
 use crate::{Error, ModelIden, Result};
@@ -78,7 +78,7 @@ impl futures::Stream for CohereStreamer {
 												None => self.captured_data.content = Some(content.clone()),
 											}
 										}
-										InterStreamEvent::Chunk(content)
+										InterStreamEvent::Chunk(InterStreamChunk::Content(content))
 									} else {
 										continue;
 									}
@@ -107,6 +107,8 @@ impl futures::Stream for CohereStreamer {
 										captured_usage,
 										captured_content: self.captured_data.content.take(),
 										captured_reasoning_content: self.captured_data.reasoning_content.take(),
+										captured_tools: self.captured_data.tools.clone(),
+										
 									};
 
 									InterStreamEvent::End(inter_stream_end)

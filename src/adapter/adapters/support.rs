@@ -1,7 +1,7 @@
 //! This support module is for common constructs and utilities for all the adapter implementations.
 //! It should be private to the `crate::adapter::adapters` module.
 
-use crate::chat::{ChatOptionsSet, Usage};
+use crate::chat::{ChatOptionsSet, ToolCall, Usage};
 use crate::resolver::AuthData;
 use crate::ModelIden;
 use crate::{Error, Result};
@@ -20,6 +20,7 @@ pub struct StreamerOptions {
 	pub capture_usage: bool,
 	pub capture_reasoning_content: bool,
 	pub capture_content: bool,
+	pub capture_tools: bool,
 	pub model_iden: ModelIden,
 }
 
@@ -29,6 +30,7 @@ impl StreamerOptions {
 			capture_usage: options_set.capture_usage().unwrap_or(false),
 			capture_content: options_set.capture_content().unwrap_or(false),
 			capture_reasoning_content: options_set.capture_reasoning_content().unwrap_or(false),
+			capture_tools: options_set.capture_tools().unwrap_or(false),
 			model_iden,
 		}
 	}
@@ -43,6 +45,7 @@ pub struct StreamerCapturedData {
 	pub usage: Option<Usage>,
 	pub content: Option<String>,
 	pub reasoning_content: Option<String>,
+	pub tools: Vec<ToolCall>,
 }
 
 // endregion: --- Streamer Captured Data

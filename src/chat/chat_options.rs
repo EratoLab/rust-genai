@@ -41,6 +41,10 @@ pub struct ChatOptions {
 	/// `StreamEnd` from `StreamEvent::End(StreamEnd)` will contain `StreamEnd.captured_reasoning_content`
 	pub capture_reasoning_content: Option<bool>,
 
+	/// (for streaming only) Capture/concatenate the full message content from all content chunks
+	/// `StreamEnd` from `StreamEvent::End(StreamEnd)` will contain `StreamEnd.captured_tools`
+	pub capture_tools: Option<bool>,
+
 	/// Specifies the response format for a chat request.
 	/// - `ChatResponseFormat::JsonMode` is for OpenAI-like API usage, where the user must specify in the prompt that they want a JSON format response.
 	///
@@ -90,6 +94,13 @@ impl ChatOptions {
 	/// Set the `capture_reasoning_content` for this request.
 	pub fn with_capture_reasoning_content(mut self, value: bool) -> Self {
 		self.capture_reasoning_content = Some(value);
+		self
+	}
+
+
+	/// Set the `capture_reasoning_content` for this request.
+	pub fn with_capture_tools(mut self, value: bool) -> Self {
+		self.capture_tools = Some(value);
 		self
 	}
 
@@ -239,6 +250,12 @@ impl ChatOptionsSet<'_, '_> {
 		self.chat
 			.and_then(|chat| chat.capture_reasoning_content)
 			.or_else(|| self.client.and_then(|client| client.capture_reasoning_content))
+	}
+
+	pub fn capture_tools(&self) -> Option<bool> {
+		self.chat
+			.and_then(|chat| chat.capture_tools)
+			.or_else(|| self.client.and_then(|client| client.capture_tools))
 	}
 
 	pub fn response_format(&self) -> Option<&ChatResponseFormat> {

@@ -1,7 +1,7 @@
 //! Printer utility to help print a chat stream
 //! > Note: This is primarily for quick testing and temporary debugging
 
-use crate::chat::{ChatStreamEvent, ChatStreamResponse, StreamChunk};
+use crate::chat::{ChatStreamEvent, ChatStreamResponse, StreamChunk, StreamReasoningChunk};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWriteExt as _, Stdout};
@@ -54,6 +54,8 @@ async fn print_chat_stream_inner(
 
 	let mut first_chunk = true;
 	let mut first_reasoning_chunk = true;
+	
+	let mut tool_id = 0;
 
 	while let Some(Ok(stream_event)) = stream.next().await {
 		let (event_info, content) = {
@@ -67,7 +69,7 @@ async fn print_chat_stream_inner(
 					}
 				}
 
-				ChatStreamEvent::Chunk(StreamChunk { content }) => {
+				ChatStreamEvent::Chunk(StreamChunk::Content (content)) => {
 					if print_events && first_chunk {
 						first_chunk = false;
 						(
@@ -79,7 +81,24 @@ async fn print_chat_stream_inner(
 					}
 				}
 
-				ChatStreamEvent::ReasoningChunk(StreamChunk { content }) => {
+				ChatStreamEvent::Chunk(StreamChunk::Tool (id, tool)) => {
+					tool_id = id;
+					if print_events && first_chunk && tool_id == id {
+						first_chunk = false;
+						(
+							Some(format!("\n-- ChatStreamEvent::Chunk Tool #{} (part):\n", id)),
+							Some(format!("{:?}", tool)),
+						)
+					} else {
+						(None, Some(format!("{:?}", tool)),)
+					}
+					
+					
+				}
+				
+				
+
+				ChatStreamEvent::ReasoningChunk(StreamReasoningChunk::Content(content)) => {
 					if print_events && first_reasoning_chunk {
 						first_reasoning_chunk = false;
 						(

@@ -71,6 +71,7 @@ impl Adapter for OpenAIAdapter {
 
 		// -- Capture the content
 		let (content, reasoning_content) = if let Some(mut first_choice) = body.x_take::<Option<Value>>("/choices/0")? {
+			// todo: could be both! (content and tool_calls)
 			if let Some(mut content) = first_choice.x_take::<Option<String>>("/message/content")? {
 				// "Standard" attempt to get the reasoning_content
 				let mut reasoning_content = first_choice

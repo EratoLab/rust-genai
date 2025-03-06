@@ -5,7 +5,7 @@
 //!
 //! NOTE: This might be removed at some point as it may not be needed, and we could go directly to the GenAI stream.
 
-use crate::chat::Usage;
+use crate::chat::{ToolCall, Usage};
 
 #[derive(Debug, Default)]
 pub struct InterStreamEnd {
@@ -17,13 +17,37 @@ pub struct InterStreamEnd {
 
 	// When `ChatOptions..capture_reasoning_content == true`
 	pub captured_reasoning_content: Option<String>,
+
+	// When `ChatOptions..capture_tools == true`
+	pub captured_tools: Vec<ToolCall>,
+}
+
+/// Intermediary InterReasoningChunk
+#[derive(Debug)]
+pub enum InterReasoningChunk {
+	Content(String),
+}
+
+/// Intermediary InterStreamChunkTool
+#[derive(Debug)]
+pub struct InterStreamChunkTool {
+	pub id: String,
+	pub name: String,
+	pub arguments: String,
+}
+
+#[derive(Debug)]
+/// Intermediary InterStreamChunk
+pub enum InterStreamChunk {
+	Content(String),
+	Tool(usize, InterStreamChunkTool),
 }
 
 /// Intermediary StreamEvent
 #[derive(Debug)]
 pub enum InterStreamEvent {
 	Start,
-	Chunk(String),
-	ReasoningChunk(String),
+	Chunk(InterStreamChunk),
+	ReasoningChunk(InterReasoningChunk),
 	End(InterStreamEnd),
 }

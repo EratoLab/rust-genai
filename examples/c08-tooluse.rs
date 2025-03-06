@@ -1,13 +1,21 @@
 use dotenv::dotenv;
 use genai::chat::printer::print_chat_stream;
-use genai::chat::{ChatMessage, ChatRequest, Tool, ToolResponse};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, Tool, ToolResponse};
 use genai::Client;
 use serde_json::json;
+use tokio_stream::StreamExt;
 
 const MODEL: &str = "gpt-4o-mini"; // or "gemini-2.0-flash" or other model supporting tool calls
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+	tracing_subscriber::fmt()
+		.with_max_level(tracing::Level::DEBUG)
+		.init();
+
+	dotenv().ok();
+
 	let client = Client::default();
 
 	// 1. Define a tool for getting weather information
@@ -39,39 +47,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	// 3. Make the initial call to get the function call
 	println!("--- Getting function call from model");
-	let chat_res = client.exec_chat(MODEL, chat_req.clone(), None).await?;
+	let mut  chat_res = client.exec_chat_stream(MODEL, chat_req.clone(), Some(&ChatOptions::default().with_capture_tools(true))).await?;
 
-	// 4. Extract the tool calls from the response
-	let tool_calls = chat_res.into_tool_calls().ok_or("Expected tool calls in the response")?;
-
-	println!("--- Tool calls received:");
-	for tool_call in &tool_calls {
-		println!("Function: {}", tool_call.fn_name);
-		println!("Arguments: {}", tool_call.fn_arguments);
+	while let Some(event ) = chat_res.stream.next().await {
+		println!("{:?}", event);
 	}
 
-	// 5. Simulate executing the function and getting a result
-	// In a real app, you would call your actual API or service here
-	let first_tool_call = &tool_calls[0];
-	let tool_response = ToolResponse::new(
-		first_tool_call.call_id.clone(),
-		json!({
-			"temperature": 22.5,
-			"condition": "Sunny",
-			"humidity": 65
-		})
-		.to_string(),
-	);
+	// 4. Extract the tool calls from the response
+	//let tool_calls = chat_res.into_tool_calls().ok_or("Expected tool calls in the response")?;
 
-	// 6. Add both the tool calls from the model and your tool response to the chat history
-	let chat_req = chat_req.append_message(tool_calls).append_message(tool_response);
-
-	// 7. Get the final response from the model with the function results
-	println!("\n--- Getting final response with function results");
-	let chat_res = client.exec_chat_stream(MODEL, chat_req, None).await?;
-
-	println!("\n--- Final response:");
-	print_chat_stream(chat_res, None).await?;
+	// println!("--- Tool calls received:");
+	// for tool_call in &tool_calls {
+	// 	println!("Function: {}", tool_call.fn_name);
+	// 	println!("Arguments: {}", tool_call.fn_arguments);
+	// }
+	//
+	// // 5. Simulate executing the function and getting a result
+	// // In a real app, you would call your actual API or service here
+	// let first_tool_call = &tool_calls[0];
+	// let tool_response = ToolResponse::new(
+	// 	first_tool_call.call_id.clone(),
+	// 	json!({
+	// 		"temperature": 22.5,
+	// 		"condition": "Sunny",
+	// 		"humidity": 65
+	// 	})
+	// 	.to_string(),
+	// );
+	//
+	// // 6. Add both the tool calls from the model and your tool response to the chat history
+	// let chat_req = chat_req.append_message(tool_calls).append_message(tool_response);
+	//
+	// // 7. Get the final response from the model with the function results
+	// println!("\n--- Getting final response with function results");
+	// let chat_res = client.exec_chat_stream(MODEL, chat_req, None).await?;
+	//
+	// println!("\n--- Final response:");
+	// print_chat_stream(chat_res, None).await?;
 
 	Ok(())
 }

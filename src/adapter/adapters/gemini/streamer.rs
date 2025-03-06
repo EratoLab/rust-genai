@@ -1,6 +1,6 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::gemini::{GeminiAdapter, GeminiChatResponse};
-use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
+use crate::adapter::inter_stream::{InterStreamChunk, InterStreamEnd, InterStreamEvent};
 use crate::chat::ChatOptionsSet;
 use crate::webc::WebStream;
 use crate::{Error, ModelIden, Result};
@@ -54,6 +54,7 @@ impl futures::Stream for GeminiStreamer {
 								captured_usage: self.captured_data.usage.take(),
 								captured_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
+								captured_tools: self.captured_data.tools.clone(),
 							};
 
 							InterStreamEvent::End(inter_stream_end)
@@ -104,7 +105,7 @@ impl futures::Stream for GeminiStreamer {
 									self.captured_data.usage = Some(usage);
 								}
 
-								InterStreamEvent::Chunk(content)
+								InterStreamEvent::Chunk(InterStreamChunk::Content(content))
 							} else {
 								continue;
 							}

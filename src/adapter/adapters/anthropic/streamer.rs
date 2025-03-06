@@ -1,5 +1,5 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
-use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
+use crate::adapter::inter_stream::{InterStreamChunk, InterStreamEnd, InterStreamEvent};
 use crate::chat::{ChatOptionsSet, Usage};
 use crate::{Error, ModelIden, Result};
 use reqwest_eventsource::{Event, EventSource};
@@ -72,7 +72,7 @@ impl futures::Stream for AnthropicStreamer {
 								}
 							}
 
-							return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(content))));
+							return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(InterStreamChunk::Content(content)))));
 						}
 						"content_block_stop" => {
 							continue;
@@ -103,6 +103,7 @@ impl futures::Stream for AnthropicStreamer {
 								captured_usage,
 								captured_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
+								captured_tools: self.captured_data.tools.clone(),
 							};
 
 							// TODO: Need to capture the data as needed

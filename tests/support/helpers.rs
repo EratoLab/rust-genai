@@ -1,6 +1,6 @@
 use super::Result;
 use bitflags::parser::to_writer;
-use genai::chat::{ChatStream, ChatStreamEvent, StreamEnd};
+use genai::chat::{ChatStream, ChatStreamEvent, StreamChunk, StreamEnd, StreamReasoningChunk, ToolCall};
 use tokio_stream::StreamExt;
 
 /// A macro to retrieve the value of an `Option` field from a struct, returning an error if the field is `None`.
@@ -88,12 +88,16 @@ pub async fn extract_stream_end(mut chat_stream: ChatStream) -> Result<StreamExt
 	while let Some(Ok(stream_event)) = chat_stream.next().await {
 		match stream_event {
 			ChatStreamEvent::Start => (), // nothing to do
-			ChatStreamEvent::Chunk(s_chunk) => content.push(s_chunk.content),
-			ChatStreamEvent::ReasoningChunk(s_chunk) => reasoning_content.push(s_chunk.content),
+			ChatStreamEvent::Chunk(StreamChunk::Content(s_chunk)) => content.push(s_chunk),
+			ChatStreamEvent::Chunk(StreamChunk::Tool(id, tool)) => {
+				// todo: add logics to check the tool.
+			},
+			ChatStreamEvent::ReasoningChunk(StreamReasoningChunk::Content(s_chunk)) => reasoning_content.push(s_chunk),
 			ChatStreamEvent::End(s_end) => {
 				stream_end = Some(s_end);
 				break;
 			}
+			
 		}
 	}
 
