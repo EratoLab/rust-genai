@@ -316,11 +316,31 @@ impl OpenAIAdapter {
 		}
 
 		if let Some(max_tokens) = options_set.max_tokens() {
-			payload.x_insert("max_tokens", max_tokens)?;
+			// Quickfix for changed name of parameter
+			// See https://github.com/jeremychone/rust-genai/issues/73
+			if model.model_name.starts_with("o1-")
+				|| model.model_name.starts_with("o2-")
+				|| model.model_name.starts_with("o3-")
+				|| model.model_name.starts_with("o4-")
+			{
+				payload.x_insert("max_completion_tokens", max_tokens)?;
+			} else {
+				payload.x_insert("max_tokens", max_tokens)?;
+			}
 		} else if let Some(custom) = custom.as_ref()
 			&& let Some(max_tokens) = custom.default_max_tokens
 		{
-			payload.x_insert("max_tokens", max_tokens)?;
+			// Quickfix for changed name of parameter
+			// See https://github.com/jeremychone/rust-genai/issues/73
+			if model.model_name.starts_with("o1-")
+				|| model.model_name.starts_with("o2-")
+				|| model.model_name.starts_with("o3-")
+				|| model.model_name.starts_with("o4-")
+			{
+				payload.x_insert("max_completion_tokens", max_tokens)?;
+			} else {
+				payload.x_insert("max_tokens", max_tokens)?;
+			}
 		}
 		if let Some(top_p) = options_set.top_p() {
 			payload.x_insert("top_p", top_p)?;
