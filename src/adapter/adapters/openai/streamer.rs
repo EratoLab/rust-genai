@@ -210,7 +210,8 @@ impl futures::Stream for OpenAIStreamer {
 						// If it's not Groq, xAI, DeepSeek the usage is captured at the end when choices are empty or null
 						if !matches!(adapter_kind, AdapterKind::Groq)
 							&& !matches!(adapter_kind, AdapterKind::DeepSeek)
-							&& self.captured_data.usage.is_none() // this might be redundant
+							// NOTE: commented out, as that line prevents usage from Azure OpenAI to be reported
+							// && self.captured_data.usage.is_none() // this might be redundant
 							&& self.options.capture_usage
 						{
 							// permissive for now
