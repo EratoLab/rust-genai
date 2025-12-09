@@ -66,6 +66,10 @@ impl Adapter for AnthropicAdapter {
 		let base_url = endpoint.base_url();
 		match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => format!("{base_url}messages"),
+			ServiceType::Image => {
+				// This will be caught at the adapter dispatch level, but return a dummy URL
+				format!("{base_url}unsupported")
+			}
 		}
 	}
 

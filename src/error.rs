@@ -27,6 +27,12 @@ pub enum Error {
 	#[display("Content type not supported for model '{model_iden}'.\nCause: {cause}")]
 	MessageContentTypeNotSupported { model_iden: ModelIden, cause: &'static str },
 
+	#[display("Service type '{service_type}' not supported for model '{model_iden}'")]
+	ServiceTypeNotSupported {
+		model_iden: ModelIden,
+		service_type: &'static str,
+	},
+
 	#[display("JSON mode requested but no instruction/prompt provided.")]
 	JsonModeWithoutInstruction,
 

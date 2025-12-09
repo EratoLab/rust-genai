@@ -52,7 +52,14 @@ impl Adapter for GroqAdapter {
 	}
 
 	fn get_service_url(model: &ModelIden, service_type: ServiceType, endpoint: Endpoint) -> String {
-		OpenAIAdapter::util_get_service_url(model, service_type, endpoint)
+		match service_type {
+			ServiceType::Image => {
+				// Groq doesn't support image generation
+				let base_url = endpoint.base_url();
+				format!("{base_url}unsupported")
+			}
+			_ => OpenAIAdapter::util_get_service_url(model, service_type, endpoint),
+		}
 	}
 
 	fn to_web_request_data(

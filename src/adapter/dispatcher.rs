@@ -5,7 +5,7 @@ use crate::adapter::gemini::GeminiAdapter;
 use crate::adapter::ollama::OllamaAdapter;
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse};
+use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
 use crate::webc::WebResponse;
 use crate::{Result, ServiceTarget};
 use reqwest::RequestBuilder;
@@ -135,6 +135,43 @@ impl AdapterDispatcher {
 			AdapterKind::Nebius => NebiusAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
 			AdapterKind::Xai => XaiAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
 			AdapterKind::DeepSeek => DeepSeekAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
+		}
+	}
+
+	pub fn to_image_request_data(
+		target: ServiceTarget,
+		image_req: ImageRequest,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<WebRequestData> {
+		let adapter_kind = &target.model.adapter_kind;
+		match adapter_kind {
+			AdapterKind::OpenAI => OpenAIAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Anthropic => AnthropicAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Cohere => CohereAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Ollama => OllamaAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Gemini => GeminiAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Groq => GroqAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Nebius => NebiusAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::Xai => XaiAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::DeepSeek => DeepSeekAdapter::to_image_request_data(target, image_req, options_set),
+		}
+	}
+
+	pub fn to_image_response(
+		model_iden: ModelIden,
+		web_response: WebResponse,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<ImageResponse> {
+		match model_iden.adapter_kind {
+			AdapterKind::OpenAI => OpenAIAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Anthropic => AnthropicAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Cohere => CohereAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Ollama => OllamaAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Gemini => GeminiAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Groq => GroqAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Nebius => NebiusAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::Xai => XaiAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::DeepSeek => DeepSeekAdapter::to_image_response(model_iden, web_response, options_set),
 		}
 	}
 }
