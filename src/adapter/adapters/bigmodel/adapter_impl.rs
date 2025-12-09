@@ -43,6 +43,7 @@ impl Adapter for BigModelAdapter {
 		let url = match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => format!("{base_url}chat/completions"),
 			ServiceType::Embed => format!("{base_url}embeddings"),
+			ServiceType::Image => format!("{base_url}unsupported"),
 		};
 		Ok(url)
 	}

@@ -69,6 +69,11 @@ impl Adapter for OllamaAdapter {
 		match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => Ok(format!("{base_url}api/chat")),
 			ServiceType::Embed => Ok(format!("{base_url}api/embed")),
+			ServiceType::Image => {
+				// Ollama doesn't support image generation
+				let base_url = endpoint.base_url();
+				Ok(format!("{base_url}unsupported"))
+			}
 		}
 	}
 

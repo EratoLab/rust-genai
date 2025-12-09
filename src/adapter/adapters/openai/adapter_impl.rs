@@ -1,8 +1,6 @@
 use crate::adapter::openai::OpenAIStreamer;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{
-	ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, MessageContent, ToolCall,
-};
+use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, ImageRequest, ImageResponse, MessageContent, ToolCall};
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::{EventSourceStream, WebResponse};
 use crate::{Error, Result};
@@ -156,6 +154,22 @@ impl Adapter for OpenAIAdapter {
 		options_set: crate::embed::EmbedOptionsSet<'_, '_>,
 	) -> Result<crate::embed::EmbedResponse> {
 		super::embed::to_embed_response(model_iden, web_response, options_set)
+	}
+
+	fn to_image_request_data(
+		target: ServiceTarget,
+		image_req: ImageRequest,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<WebRequestData> {
+		OpenAIAdapter::util_to_image_request_data(target, image_req, options_set)
+	}
+
+	fn to_image_response(
+		model_iden: ModelIden,
+		web_response: WebResponse,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<ImageResponse> {
+		OpenAIAdapter::util_to_image_response(model_iden, web_response, options_set)
 	}
 }
 

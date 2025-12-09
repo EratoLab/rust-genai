@@ -56,6 +56,10 @@ impl Adapter for CohereAdapter {
 				let base_without_version = base_url.trim_end_matches("v1/");
 				format!("{base_without_version}v2/embed")
 			}
+			ServiceType::Image => {
+				// This will be caught at the adapter dispatch level, but return a dummy URL
+				format!("{base_url}unsupported")
+			}
 		};
 		Ok(url)
 	}
