@@ -291,6 +291,7 @@ impl OpenAIRespAdapter {
 		let suffix = match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => "responses",
 			ServiceType::Embed => "embeddings", // TODO: Probably needs to say not supported
+			ServiceType::Image => "unsupported",
 		};
 		let mut full_url = base_url.join(suffix).map_err(|err| {
 			Error::Internal(format!(

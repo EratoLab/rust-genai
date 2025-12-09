@@ -1,5 +1,5 @@
 use crate::adapter::AdapterKind;
-use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse};
+use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
 use crate::embed::{EmbedOptionsSet, EmbedRequest, EmbedResponse};
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::WebResponse;
@@ -58,6 +58,33 @@ pub trait Adapter {
 		web_response: WebResponse,
 		options_set: EmbedOptionsSet<'_, '_>,
 	) -> Result<EmbedResponse>;
+
+	/// To be implemented by Adapters that support image generation.
+	/// Default implementation returns an error.
+	fn to_image_request_data(
+		service_target: ServiceTarget,
+		_image_req: ImageRequest,
+		_options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<WebRequestData> {
+		Err(crate::Error::ServiceTypeNotSupported {
+			model_iden: service_target.model,
+			service_type: "Image",
+		})
+	}
+
+	/// To be implemented by Adapters that support image generation.
+	/// Default implementation returns an error.
+	fn to_image_response(
+		model_iden: ModelIden,
+		web_response: WebResponse,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<ImageResponse> {
+		let _ = (web_response, options_set);
+		Err(crate::Error::ServiceTypeNotSupported {
+			model_iden,
+			service_type: "Image",
+		})
+	}
 }
 
 // region:    --- ServiceType
@@ -67,6 +94,7 @@ pub enum ServiceType {
 	Chat,
 	ChatStream,
 	Embed,
+	Image,
 }
 
 // endregion: --- ServiceType

@@ -82,6 +82,10 @@ impl Adapter for GeminiAdapter {
 			ServiceType::Chat => format!("{base_url}models/{model_name}:generateContent"),
 			ServiceType::ChatStream => format!("{base_url}models/{model_name}:streamGenerateContent"),
 			ServiceType::Embed => format!("{base_url}models/{model_name}:embedContent"), // Gemini embeddings API
+			ServiceType::Image => {
+				// Gemini doesn't support image generation through this API
+				format!("{base_url}unsupported")
+			}
 		};
 		Ok(url)
 	}

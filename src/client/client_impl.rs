@@ -1,5 +1,5 @@
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse};
+use crate::chat::{ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
 use crate::embed::{EmbedOptions, EmbedOptionsSet, EmbedRequest, EmbedResponse};
 use crate::resolver::AuthData;
 use crate::{Client, Error, ModelIden, Result, ServiceTarget};
@@ -200,5 +200,37 @@ impl Client {
 		let res = AdapterDispatcher::to_embed_response(model, web_res, options_set)?;
 
 		Ok(res)
+	}
+
+	/// Executes an image generation request.
+	pub async fn exec_image_generation(
+		&self,
+		model: &str,
+		image_req: ImageRequest,
+		options: Option<&ChatOptions>,
+	) -> Result<ImageResponse> {
+		let options_set = ChatOptionsSet::default()
+			.with_chat_options(options)
+			.with_client_options(self.config().chat_options());
+
+		let model = self.default_model(model)?;
+		let target = self.config().resolve_service_target(model).await?;
+		let model = target.model.clone();
+
+		let WebRequestData { headers, payload, url } =
+			AdapterDispatcher::to_image_request_data(target, image_req, options_set.clone())?;
+
+		let web_res =
+			self.web_client()
+				.do_post(&url, &headers, payload)
+				.await
+				.map_err(|webc_error| Error::WebModelCall {
+					model_iden: model.clone(),
+					webc_error,
+				})?;
+
+		let image_res = AdapterDispatcher::to_image_response(model, web_res, options_set)?;
+
+		Ok(image_res)
 	}
 }

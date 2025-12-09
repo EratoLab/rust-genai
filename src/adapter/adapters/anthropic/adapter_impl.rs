@@ -84,6 +84,10 @@ impl Adapter for AnthropicAdapter {
 		let url = match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => format!("{base_url}messages"),
 			ServiceType::Embed => format!("{base_url}embeddings"), // Anthropic doesn't support embeddings yet
+			ServiceType::Image => {
+				// This will be caught at the adapter dispatch level, but return a dummy URL
+				format!("{base_url}unsupported")
+			}
 		};
 
 		Ok(url)

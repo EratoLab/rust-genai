@@ -31,7 +31,14 @@ impl Adapter for DeepSeekAdapter {
 	}
 
 	fn get_service_url(model: &ModelIden, service_type: ServiceType, endpoint: Endpoint) -> Result<String> {
-		OpenAIAdapter::util_get_service_url(model, service_type, endpoint)
+		match service_type {
+			ServiceType::Image => {
+				// DeepSeek doesn't support image generation
+				let base_url = endpoint.base_url();
+				Ok(format!("{base_url}unsupported"))
+			}
+			_ => OpenAIAdapter::util_get_service_url(model, service_type, endpoint),
+		}
 	}
 
 	fn to_web_request_data(

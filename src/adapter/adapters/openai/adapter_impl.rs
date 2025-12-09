@@ -4,7 +4,7 @@ use crate::adapter::openai::ToWebRequestCustom;
 use crate::adapter::{Adapter, AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{
 	BinarySource, ChatOptionsSet, ChatRequest, ChatResponse, ChatResponseFormat, ChatRole, ChatStream,
-	ChatStreamResponse, ContentPart, MessageContent, ReasoningEffort, ToolCall, Usage,
+	ChatStreamResponse, ContentPart, ImageRequest, ImageResponse, MessageContent, ReasoningEffort, ToolCall, Usage,
 };
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::{EventSourceStream, WebResponse};
@@ -13,6 +13,7 @@ use crate::{ModelIden, ServiceTarget};
 use reqwest::RequestBuilder;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::error;
 use tracing::warn;
 use value_ext::JsonValueExt;
@@ -170,6 +171,22 @@ impl Adapter for OpenAIAdapter {
 	) -> Result<crate::embed::EmbedResponse> {
 		super::embed::to_embed_response(model_iden, web_response, options_set)
 	}
+
+	fn to_image_request_data(
+		target: ServiceTarget,
+		image_req: ImageRequest,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<WebRequestData> {
+		OpenAIAdapter::util_to_image_request_data(target, image_req, options_set)
+	}
+
+	fn to_image_response(
+		model_iden: ModelIden,
+		web_response: WebResponse,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<ImageResponse> {
+		OpenAIAdapter::util_to_image_response(model_iden, web_response, options_set)
+	}
 }
 
 /// Support functions for other adapters that share OpenAI APIs
@@ -189,6 +206,7 @@ impl OpenAIAdapter {
 		let suffix = match service_type {
 			ServiceType::Chat | ServiceType::ChatStream => "chat/completions",
 			ServiceType::Embed => "embeddings",
+			ServiceType::Image => "images/generations",
 		};
 		let mut full_url = base_url.join(suffix).map_err(|err| {
 			Error::Internal(format!(
@@ -554,6 +572,86 @@ impl OpenAIAdapter {
 		});
 
 		Ok(OpenAIRequestParts { messages, tools })
+	}
+
+	/// Build image generation request data
+	pub(in crate::adapter::adapters) fn util_to_image_request_data(
+		target: ServiceTarget,
+		image_req: ImageRequest,
+		_options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<WebRequestData> {
+		let ServiceTarget { model, auth, endpoint } = target;
+		let (_, model_name) = model.model_name.namespace_and_name();
+
+		// -- api_key
+		let api_key = get_api_key(auth, &model)?;
+
+		// -- url
+		let url = AdapterDispatcher::get_service_url(&model, ServiceType::Image, endpoint)?;
+
+		// -- headers
+		let headers = Headers::from(vec![
+			("Authorization".to_string(), format!("Bearer {api_key}")),
+		]);
+
+		// -- Build the payload
+		let mut payload = json!({
+			"model": model_name,
+			"prompt": image_req.prompt,
+		});
+
+		// Add optional parameters
+		if let Some(n) = image_req.n {
+			payload["n"] = json!(n);
+		}
+		if let Some(size) = image_req.size {
+			payload["size"] = json!(size);
+		}
+		if let Some(quality) = image_req.quality {
+			payload["quality"] = json!(quality);
+		}
+		if let Some(style) = image_req.style {
+			payload["style"] = json!(style);
+		}
+		if let Some(response_format) = image_req.response_format {
+			payload["response_format"] = json!(response_format);
+		}
+
+		Ok(WebRequestData { url, headers, payload })
+	}
+
+	/// Parse image generation response
+	pub(in crate::adapter::adapters) fn util_to_image_response(
+		model_iden: ModelIden,
+		web_response: WebResponse,
+		options_set: ChatOptionsSet<'_, '_>,
+	) -> Result<ImageResponse> {
+		let WebResponse { mut body, .. } = web_response;
+
+		let captured_raw_body = options_set.capture_raw_body().unwrap_or_default().then(|| body.clone());
+
+		// Extract the images from the response
+		let mut images: Vec<ContentPart> = Vec::new();
+
+		if let Ok(Some(data_array)) = body.x_take::<Option<Vec<Value>>>("/data") {
+			for mut item in data_array {
+				// Check for URL format
+				if let Ok(Some(url)) = item.x_take::<Option<String>>("/url") {
+					images.push(ContentPart::from_binary_url("image/png", url, None));
+				}
+				// Check for base64 format
+				else if let Ok(Some(b64_json)) = item.x_take::<Option<String>>("/b64_json") {
+					images.push(ContentPart::from_binary_base64("image/png", Arc::from(b64_json.as_str()), None));
+				}
+			}
+		}
+
+		Ok(ImageResponse {
+			images,
+			model_iden,
+			usage: None,
+			captured_raw_body,
+		})
 	}
 }
 
