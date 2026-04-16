@@ -1,7 +1,7 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::anthropic::parse_cache_creation_details;
 use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
-use crate::chat::{ChatOptionsSet, PromptTokensDetails, ToolCall, Usage};
+use crate::chat::{ChatOptionsSet, PromptTokensDetails, StopReason, ToolCall, Usage};
 use crate::webc::{Event, EventSourceStream};
 use crate::{Error, ModelIden, Result};
 use serde_json::{Map, Value};
@@ -61,6 +61,12 @@ impl futures::Stream for AnthropicStreamer {
 						}
 						"message_delta" => {
 							self.capture_usage(message_type, &message.data)?;
+							// Capture stop_reason from delta (e.g., "end_turn", "max_tokens", "tool_use")
+							if let Ok(data) = self.parse_message_data(&message.data)
+								&& let Ok(reason) = data.x_get::<String>("/delta/stop_reason")
+							{
+								self.captured_data.stop_reason = Some(reason);
+							}
 							continue;
 						}
 						"content_block_start" => {
@@ -74,11 +80,25 @@ impl futures::Stream for AnthropicStreamer {
 								Ok("text") => self.in_progress_block = InProgressBlock::Text,
 								Ok("thinking") => self.in_progress_block = InProgressBlock::Thinking,
 								Ok("tool_use") => {
+									let id: String = data.x_take("/content_block/id")?;
+									let name: String = data.x_take("/content_block/name")?;
+
+									// Emit an initial ToolCallChunk with name and empty args,
+									// matching OpenAI's incremental streaming behaviour.
+									let tc = ToolCall {
+										call_id: id.clone(),
+										fn_name: name.clone(),
+										fn_arguments: Value::String(String::new()),
+										thought_signatures: None,
+									};
+
 									self.in_progress_block = InProgressBlock::ToolUse {
-										id: data.x_take("/content_block/id")?,
-										name: data.x_take("/content_block/name")?,
+										id,
+										name,
 										input: String::new(),
 									};
+
+									return Poll::Ready(Some(Ok(InterStreamEvent::ToolCallChunk(tc))));
 								}
 								Ok(txt) => {
 									tracing::warn!("unhandled content type: {txt}");
@@ -111,9 +131,20 @@ impl futures::Stream for AnthropicStreamer {
 
 									return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(content))));
 								}
-								InProgressBlock::ToolUse { input, .. } => {
-									input.push_str(data.x_get_str("/delta/partial_json")?);
-									continue;
+								InProgressBlock::ToolUse { id, name, input } => {
+									let partial = data.x_get_str("/delta/partial_json")?;
+									input.push_str(partial);
+
+									// Emit incremental ToolCallChunk with accumulated args
+									// (as Value::String, same convention as OpenAI adapter).
+									let tc = ToolCall {
+										call_id: id.clone(),
+										fn_name: name.clone(),
+										fn_arguments: Value::String(input.clone()),
+										thought_signatures: None,
+									};
+
+									return Poll::Ready(Some(Ok(InterStreamEvent::ToolCallChunk(tc))));
 								}
 								InProgressBlock::Thinking => {
 									if let Ok(thinking) = data.x_take::<String>("/delta/thinking") {
@@ -143,28 +174,28 @@ impl futures::Stream for AnthropicStreamer {
 						"content_block_stop" => {
 							match std::mem::replace(&mut self.in_progress_block, InProgressBlock::Text) {
 								InProgressBlock::ToolUse { id, name, input } => {
-									let fn_arguments = if input.is_empty() {
-										Value::Object(Map::new())
-									} else {
-										serde_json::from_str(&input)?
-									};
-
-									let tc = ToolCall {
-										call_id: id,
-										fn_name: name,
-										fn_arguments,
-										thought_signatures: None,
-									};
-
-									// Add to the captured_tool_calls if chat options say so
+									// ToolCallChunks were already emitted incrementally
+									// during content_block_start and content_block_delta.
+									// Here we only finalize capture with parsed arguments.
 									if self.options.capture_tool_calls {
+										let fn_arguments = if input.is_empty() {
+											Value::Object(Map::new())
+										} else {
+											serde_json::from_str(&input)?
+										};
+
+										let tc = ToolCall {
+											call_id: id,
+											fn_name: name,
+											fn_arguments,
+											thought_signatures: None,
+										};
+
 										match self.captured_data.tool_calls {
-											Some(ref mut t) => t.push(tc.clone()),
-											None => self.captured_data.tool_calls = Some(vec![tc.clone()]),
+											Some(ref mut t) => t.push(tc),
+											None => self.captured_data.tool_calls = Some(vec![tc]),
 										}
 									}
-
-									return Poll::Ready(Some(Ok(InterStreamEvent::ToolCallChunk(tc))));
 								}
 								_ => {
 									// no-op for remaining block types
@@ -197,10 +228,12 @@ impl futures::Stream for AnthropicStreamer {
 
 							let inter_stream_end = InterStreamEnd {
 								captured_usage,
+								captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 								captured_text_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
 								captured_tool_calls: self.captured_data.tool_calls.take(),
 								captured_thought_signatures: None,
+								captured_response_id: None,
 							};
 
 							// TODO: Need to capture the data as needed

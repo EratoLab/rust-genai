@@ -1,5 +1,7 @@
 use super::groq::GroqAdapter;
+use crate::adapter::adapters::github_copilot::GithubCopilotAdapter;
 use crate::adapter::adapters::mimo::MimoAdapter;
+use crate::adapter::adapters::ollama_cloud::OllamaCloudAdapter;
 use crate::adapter::adapters::together::TogetherAdapter;
 use crate::adapter::adapters::zai::ZaiAdapter;
 use crate::adapter::aliyun::AliyunAdapter;
@@ -13,6 +15,7 @@ use crate::adapter::nebius::NebiusAdapter;
 use crate::adapter::ollama::OllamaAdapter;
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::openai_resp::OpenAIRespAdapter;
+use crate::adapter::vertex::VertexAdapter;
 use crate::adapter::xai::XaiAdapter;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
@@ -49,6 +52,9 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::default_endpoint(),
 			AdapterKind::Cohere => CohereAdapter::default_endpoint(),
 			AdapterKind::Ollama => OllamaAdapter::default_endpoint(),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::default_endpoint(),
+			AdapterKind::Vertex => VertexAdapter::default_endpoint(),
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::default_endpoint(),
 		}
 	}
 
@@ -70,27 +76,33 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::default_auth(),
 			AdapterKind::Cohere => CohereAdapter::default_auth(),
 			AdapterKind::Ollama => OllamaAdapter::default_auth(),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::default_auth(),
+			AdapterKind::Vertex => VertexAdapter::default_auth(),
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::default_auth(),
 		}
 	}
 
-	pub async fn all_model_names(kind: AdapterKind) -> Result<Vec<String>> {
+	pub async fn all_model_names(kind: AdapterKind, endpoint: Endpoint, auth: AuthData) -> Result<Vec<String>> {
 		match kind {
-			AdapterKind::OpenAI => OpenAIAdapter::all_model_names(kind).await,
-			AdapterKind::OpenAIResp => OpenAIRespAdapter::all_model_names(kind).await,
-			AdapterKind::Gemini => GeminiAdapter::all_model_names(kind).await,
-			AdapterKind::Anthropic => AnthropicAdapter::all_model_names(kind).await,
-			AdapterKind::Fireworks => FireworksAdapter::all_model_names(kind).await,
-			AdapterKind::Together => TogetherAdapter::all_model_names(kind).await,
-			AdapterKind::Groq => GroqAdapter::all_model_names(kind).await,
-			AdapterKind::Mimo => MimoAdapter::all_model_names(kind).await,
-			AdapterKind::Nebius => NebiusAdapter::all_model_names(kind).await,
-			AdapterKind::Xai => XaiAdapter::all_model_names(kind).await,
-			AdapterKind::DeepSeek => DeepSeekAdapter::all_model_names(kind).await,
-			AdapterKind::Zai => ZaiAdapter::all_model_names(kind).await,
-			AdapterKind::BigModel => BigModelAdapter::all_model_names(kind).await,
-			AdapterKind::Aliyun => AliyunAdapter::all_model_names(kind).await,
-			AdapterKind::Cohere => CohereAdapter::all_model_names(kind).await,
-			AdapterKind::Ollama => OllamaAdapter::all_model_names(kind).await,
+			AdapterKind::OpenAI => OpenAIAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::OpenAIResp => OpenAIRespAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Gemini => GeminiAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Anthropic => AnthropicAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Fireworks => FireworksAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Together => TogetherAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Groq => GroqAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Mimo => MimoAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Nebius => NebiusAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Xai => XaiAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::DeepSeek => DeepSeekAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Zai => ZaiAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::BigModel => BigModelAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Aliyun => AliyunAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Cohere => CohereAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Ollama => OllamaAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::Vertex => VertexAdapter::all_model_names(kind, endpoint, auth).await,
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::all_model_names(kind, endpoint, auth).await,
 		}
 	}
 
@@ -112,6 +124,9 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::get_service_url(model, service_type, endpoint),
 			AdapterKind::Cohere => CohereAdapter::get_service_url(model, service_type, endpoint),
 			AdapterKind::Ollama => OllamaAdapter::get_service_url(model, service_type, endpoint),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::get_service_url(model, service_type, endpoint),
+			AdapterKind::Vertex => VertexAdapter::get_service_url(model, service_type, endpoint),
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::get_service_url(model, service_type, endpoint),
 		}
 	}
 
@@ -145,6 +160,13 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::to_web_request_data(target, service_type, chat_req, options_set),
 			AdapterKind::Cohere => CohereAdapter::to_web_request_data(target, service_type, chat_req, options_set),
 			AdapterKind::Ollama => OllamaAdapter::to_web_request_data(target, service_type, chat_req, options_set),
+			AdapterKind::OllamaCloud => {
+				OllamaCloudAdapter::to_web_request_data(target, service_type, chat_req, options_set)
+			}
+			AdapterKind::Vertex => VertexAdapter::to_web_request_data(target, service_type, chat_req, options_set),
+			AdapterKind::GithubCopilot => {
+				GithubCopilotAdapter::to_web_request_data(target, service_type, chat_req, options_set)
+			}
 		}
 	}
 
@@ -170,6 +192,9 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::to_chat_response(model_iden, web_response, options_set),
 			AdapterKind::Cohere => CohereAdapter::to_chat_response(model_iden, web_response, options_set),
 			AdapterKind::Ollama => OllamaAdapter::to_chat_response(model_iden, web_response, options_set),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::to_chat_response(model_iden, web_response, options_set),
+			AdapterKind::Vertex => VertexAdapter::to_chat_response(model_iden, web_response, options_set),
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::to_chat_response(model_iden, web_response, options_set),
 		}
 	}
 
@@ -195,6 +220,11 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
 			AdapterKind::Cohere => CohereAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
 			AdapterKind::Ollama => OllamaAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
+			AdapterKind::Vertex => VertexAdapter::to_chat_stream(model_iden, reqwest_builder, options_set),
+			AdapterKind::GithubCopilot => {
+				GithubCopilotAdapter::to_chat_stream(model_iden, reqwest_builder, options_set)
+			}
 		}
 	}
 
@@ -224,6 +254,9 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::to_embed_request_data(target, embed_req, options_set),
 			AdapterKind::Cohere => CohereAdapter::to_embed_request_data(target, embed_req, options_set),
 			AdapterKind::Ollama => OllamaAdapter::to_embed_request_data(target, embed_req, options_set),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::to_embed_request_data(target, embed_req, options_set),
+			AdapterKind::Vertex => VertexAdapter::to_embed_request_data(target, embed_req, options_set),
+			AdapterKind::GithubCopilot => GithubCopilotAdapter::to_embed_request_data(target, embed_req, options_set),
 		}
 	}
 
@@ -252,6 +285,11 @@ impl AdapterDispatcher {
 			AdapterKind::Aliyun => AliyunAdapter::to_embed_response(model_iden, web_response, options_set),
 			AdapterKind::Cohere => CohereAdapter::to_embed_response(model_iden, web_response, options_set),
 			AdapterKind::Ollama => OllamaAdapter::to_embed_response(model_iden, web_response, options_set),
+			AdapterKind::OllamaCloud => OllamaCloudAdapter::to_embed_response(model_iden, web_response, options_set),
+			AdapterKind::Vertex => VertexAdapter::to_embed_response(model_iden, web_response, options_set),
+			AdapterKind::GithubCopilot => {
+				GithubCopilotAdapter::to_embed_response(model_iden, web_response, options_set)
+			}
 		}
 	}
 

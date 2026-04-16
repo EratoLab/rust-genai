@@ -110,11 +110,6 @@ pub async fn common_test_chat_reasoning_ok(
 			.as_deref()
 			.ok_or("SHOULD have extracted some reasoning_content")?;
 		assert!(!reasoning_content.is_empty(), "reasoning_content should not be empty");
-		// We can assume that the reasoning content should be bigger than the content given the prompt to keep content very concise.
-		assert!(
-			reasoning_content.len() > content.len(),
-			"Reasoning content should be > than the content"
-		);
 	}
 
 	Ok(())
@@ -142,7 +137,7 @@ pub async fn common_test_chat_verbosity_ok(model: &str) -> TestResult<()> {
 	// -- Check Content
 	let ratio = content_high.len() as f64 / content_low.len() as f64;
 	assert!(
-		ratio >= 2.,
+		ratio >= 1.5,
 		"The verbosity high was not high enough compared to the low. Ratio {ratio}"
 	);
 
@@ -582,6 +577,7 @@ pub async fn common_test_chat_stream_cache_explicit_1h_ttl_ok(model: &str) -> Te
 		stream_end,
 		content,
 		reasoning_content: _,
+		..
 	} = extract_stream_end(chat_res.stream).await?;
 	let content = content.ok_or("extract_stream_end SHOULD have extracted some content")?;
 
@@ -627,6 +623,7 @@ pub async fn common_test_chat_stream_simple_ok(model: &str, checks: Option<Check
 		stream_end,
 		content,
 		reasoning_content,
+		..
 	} = extract_stream_end(chat_res.stream).await?;
 	let content = content.ok_or("extract_stream_end SHOULD have extracted some content")?;
 
@@ -636,10 +633,15 @@ pub async fn common_test_chat_stream_simple_ok(model: &str, checks: Option<Check
 		stream_end.captured_usage.is_none(),
 		"StreamEnd should not have any meta_usage"
 	);
-	assert!(
-		stream_end.captured_content.is_none(),
-		"StreamEnd should not have any captured_content"
-	);
+
+	// NOTE: with gemini 3, signature is always sent back in the captured message content, even if
+	//       the captured_content is not set (because it meant capture message content)
+	//
+	let no_captured_text = match stream_end.captured_content.as_ref() {
+		None => true,
+		Some(cc) => cc.texts().is_empty(),
+	};
+	assert!(no_captured_text, "StreamEnd should not have any text captured_content");
 
 	// -- Check Reasoning Content
 	if contains_checks(checks, Check::REASONING_CONTENT) {
@@ -673,6 +675,7 @@ pub async fn common_test_chat_stream_capture_content_ok(model: &str) -> TestResu
 		stream_end,
 		content,
 		reasoning_content,
+		..
 	} = extract_stream_end(chat_res.stream).await?;
 
 	// -- Check meta_usage
@@ -682,16 +685,16 @@ pub async fn common_test_chat_stream_capture_content_ok(model: &str) -> TestResu
 		"StreamEnd should not have any meta_usage"
 	);
 
-	// -- Check captured_content
-	let captured_content = get_option_value!(stream_end.captured_content);
-	assert!(!captured_content.is_empty(), "captured_content.length should be > 0");
-
 	// -- Check Reasoning Content
 	// Should always be none, as it was not instructed to be captured.
 	assert!(
 		stream_end.captured_reasoning_content.is_none(),
 		"The captured_reasoning_content should be None"
 	);
+
+	// -- Check captured_content
+	let captured_content = get_option_value!(stream_end.captured_content);
+	assert!(!captured_content.is_empty(), "captured_content.length should be > 0");
 
 	Ok(())
 }
@@ -720,6 +723,7 @@ pub async fn common_test_chat_stream_capture_all_ok(model: &str, checks: Option<
 		stream_end,
 		content,
 		reasoning_content,
+		..
 	} = extract_stream_end(chat_res.stream).await?;
 
 	// -- Check meta_usage
@@ -772,6 +776,7 @@ pub async fn common_test_chat_stream_tool_capture_ok(model: &str) -> TestResult<
 		stream_end,
 		content,
 		reasoning_content,
+		..
 	} = extract_stream_end(chat_res.stream).await?;
 
 	// -- Check

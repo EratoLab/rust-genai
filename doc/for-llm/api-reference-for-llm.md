@@ -30,7 +30,9 @@ genai (crate root / lib.rs)
 - **ModelSpec**: Specifies a model at three resolution levels: `Name`, `Iden`, or `Target`.
 - **ServiceTarget**: Fully resolved call target: `ModelIden` + `Endpoint` + `AuthData`.
 - **Resolvers**: User hooks to customize model mapping, authentication, and service endpoints.
-- **AdapterKind**: Supported providers: `OpenAI`, `OpenAIResp`, `Gemini`, `Anthropic`, `Fireworks`, `Together`, `Groq`, `Mimo`, `Nebius`, `Xai`, `DeepSeek`, `Zai`, `BigModel`, `Cohere`, `Ollama`.
+- **AdapterKind**: Supported providers: `OpenAI`, `OpenAIResp`, `Gemini`, `Anthropic`, `Fireworks`, `Together`, `Groq`, `Mimo`, `Nebius`, `Xai`, `DeepSeek`, `Zai`, `BigModel`, `Cohere`, `Ollama`, `OllamaCloud`, `GithubCopilot`.
+  - `GithubCopilot` is a GitHub Models gateway with multi-publisher namespaced models such as `github_copilot::openai/gpt-4.1-mini`, `github_copilot::anthropic/claude-sonnet-4-6`, and `github_copilot::google/gemini-2.5-pro`.
+  - `OllamaCloud` is the hosted Ollama Cloud service (`ollama.com`). Uses the same native Ollama protocol as the local `Ollama` adapter but authenticates with `Authorization: Bearer $OLLAMA_API_KEY`. Use via `ollama_cloud::model_name` namespace (e.g., `ollama_cloud::gemma3:4b`).
 
 ## Client & Configuration
 
@@ -147,6 +149,7 @@ Fully resolved call target.
 - `options`: `Option<MessageOptions>`.
 - **Constructors**: `ChatMessage::system(text)`, `user(text)`, `assistant(text)`.
 - `with_options(options)`: Attaches `MessageOptions` (chainable).
+- `with_reasoning_content(reasoning: Option<String>)`: Appends `ContentPart::ReasoningContent` when provided. Since v0.6.0.
 - `assistant_tool_calls_with_thoughts(calls, thoughts)`: For continuing tool exchanges where thoughts must precede tool calls.
 - `size()`: Approximate in-memory size in bytes.
 - `From<Vec<ToolCall>>`: Creates assistant message with tool calls (auto-prepends thoughts if present on first call).
@@ -166,11 +169,19 @@ Per-message options.
 
 ### `CacheControl`
 
-Cache control for prompt caching (currently Anthropic only).
+Unified cache policy abstraction.
 
 - `Ephemeral`: Default 5-minute TTL.
+- `Memory`: Memory-oriented cache mode. On some providers this may be used as the request-level memory cache setting.
 - `Ephemeral5m`: Explicit 5-minute TTL.
 - `Ephemeral1h`: Extended 1-hour TTL (must appear before shorter TTLs in request order).
+- `Ephemeral24h`: Extended 24-hour TTL.
+
+On `ChatOptions`, this is a request-level cache preference.
+
+On `MessageOptions`, this is a per-message or per-content cache hint.
+
+Different providers support different variants and scopes.
 
 ### `MessageContent` (Multipart)
 
@@ -180,6 +191,7 @@ Cache control for prompt caching (currently Anthropic only).
 - **Getters**: `parts()`, `into_parts()`, `texts()`, `into_texts()`, `binaries()`, `into_binaries()`, `tool_calls()`, `into_tool_calls()`, `tool_responses()`, `into_tool_responses()`.
 - **Convenient**: `first_text()`, `into_first_text()`, `joined_texts()` (joins with blank line), `into_joined_texts()`.
 - **Queries**: `is_empty()`, `len()`, `is_text_empty()`, `is_text_only()`, `contains_text()`, `contains_tool_call()`, `contains_tool_response()`.
+- **Reasoning helpers**: `reasoning_contents()`, `into_reasoning_contents()`, `joined_reasoning_content()`, `contains_reasoning_content()`. Since v0.6.0.
 - `size()`: Approximate in-memory size.
 - Implements `IntoIterator`, `FromIterator<ContentPart>`, `Extend<ContentPart>`.
 - `From<&str>`, `From<String>`, `From<Vec<ToolCall>>`, `From<ToolResponse>`, `From<ContentPart>`, `From<Binary>`, `From<Vec<ContentPart>>`.
@@ -192,10 +204,11 @@ A single content segment in a chat message.
 - `Binary(Binary)`: Images/PDFs/Audio. `From<Binary>`.
 - `ToolCall(ToolCall)`: Model-requested function call. `From<ToolCall>`.
 - `ToolResponse(ToolResponse)`: Result of function call. `From<ToolResponse>`.
-- `ThoughtSignature(String)`: Reasoning/thoughts (e.g., Gemini/Anthropic). Not auto-from; use constructor.
+- `ThoughtSignature(String)`: Thought-signature metadata (for providers that emit signed thoughts). Not auto-from; use constructor.
+- `ReasoningContent(String)`: Reasoning text content, distinct from thought signatures. Since v0.6.0.
 - **Constructors**: `from_text(text)`, `from_binary_base64(content_type, content, name)`, `from_binary_url(content_type, url, name)`, `from_binary_file(path)`.
-- **Accessors**: `as_text()`, `into_text()`, `as_tool_call()`, `into_tool_call()`, `as_tool_response()`, `into_tool_response()`, `as_binary()`, `into_binary()`, `as_thought_signature()`, `into_thought_signature()`.
-- **Queries**: `is_text()`, `is_image()`, `is_audio()`, `is_pdf()`, `is_tool_call()`, `is_tool_response()`, `is_thought_signature()`.
+- **Accessors**: `as_text()`, `into_text()`, `as_tool_call()`, `into_tool_call()`, `as_tool_response()`, `into_tool_response()`, `as_binary()`, `into_binary()`, `as_thought_signature()`, `into_thought_signature()`, `as_reasoning_content()`, `into_reasoning_content()` (reasoning accessors since v0.6.0).
+- **Queries**: `is_text()`, `is_image()`, `is_audio()`, `is_pdf()`, `is_tool_call()`, `is_tool_response()`, `is_thought_signature()`, `is_reasoning_content()` (`is_reasoning_content()` since v0.6.0).
 - `size()`: Approximate in-memory size.
 
 ### `Binary`
@@ -225,8 +238,11 @@ All fields are `Option<T>` (unset = defer to client default or provider default)
 - `capture_raw_body`: Capture raw HTTP response body.
 - `seed`: Deterministic generation.
 - `service_tier`: `Flex`, `Auto`, `Default` (OpenAI).
+- `prompt_cache_key`: OpenAI prompt cache key.
+- `cache_control`: `CacheControl` request-level cache preference.
 - `extra_headers`: `Headers` added to the request.
-- **Chainable setters**: `with_temperature(f64)`, `with_max_tokens(u32)`, `with_top_p(f64)`, `with_capture_usage(bool)`, `with_capture_content(bool)`, `with_capture_reasoning_content(bool)`, `with_capture_tool_calls(bool)`, `with_capture_raw_body(bool)`, `with_stop_sequences(vec)`, `with_normalize_reasoning_content(bool)`, `with_response_format(format)`, `with_reasoning_effort(effort)`, `with_verbosity(v)`, `with_seed(u64)`, `with_service_tier(tier)`, `with_extra_headers(headers)`.
+- **Chainable setters**: `with_temperature(f64)`, `with_max_tokens(u32)`, `with_top_p(f64)`, `with_capture_usage(bool)`, `with_capture_content(bool)`, `with_capture_reasoning_content(bool)`, `with_capture_tool_calls(bool)`, `with_capture_raw_body(bool)`, `with_stop_sequences(vec)`, `with_normalize_reasoning_content(bool)`, `with_response_format(format)`, `with_reasoning_effort(effort)`, `with_verbosity(v)`, `with_seed(u64)`, `with_service_tier(tier)`, `with_prompt_cache_key(key)`, `with_cache_control(cache_control)`, `with_extra_headers(headers)`.
+- Deprecated: `with_json_mode(bool)` in favor of `with_response_format(ChatResponseFormat::JsonMode)`.
 
 ### `ChatResponseFormat`
 
@@ -245,8 +261,8 @@ All fields are `Option<T>` (unset = defer to client default or provider default)
 
 Provider-specific hint for reasoning intensity/budget.
 
-- Variants: `None`, `Low`, `Medium`, `High`, `Budget(u32)`, `Minimal` (legacy, for <= gpt-5).
-- `variant_name()`: Returns lowercase name (`"none"`, `"low"`, `"medium"`, `"high"`, `"budget"`, `"minimal"`).
+- Variants: `None`, `Low`, `Medium`, `High`, `XHigh`, `Max`, `Budget(u32)`, `Minimal` (legacy, for <= gpt-5).
+- `variant_name()`: Returns lowercase name (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`, `"budget"`, `"minimal"`).
 - `as_keyword()`: Returns `Option<&'static str>` (None for `Budget`).
 - `from_keyword(name)`: Parses keyword string.
 - `from_model_name(model_name)`: If model name ends with `-<effort>`, returns `(Some(effort), trimmed_name)`.
@@ -312,11 +328,30 @@ OpenAI service tier preference for flex processing.
 
 ### `Tool`
 
-- `name: String`, `description: Option<String>`, `schema: Option<Value>` (JSON Schema), `config: Option<Value>`.
+- `name: ToolName`, `description: Option<String>`, `schema: Option<Value>` (JSON Schema), `config: Option<ToolConfig>`.
 - `Tool::new(name)`: Constructor.
+- `Tool::new_web_search()`: Constructor for the built-in web search tool.
 - `with_description(desc)`, `with_schema(parameters)`, `with_config(config)`: Chainable setters.
 - `size()`: Approximate in-memory size.
 - `config`: Optional provider-specific config.
+
+### `ToolName`
+
+- `WebSearch`: Built-in provider web-search tool.
+- `Custom(String)`: User-defined tool name.
+- `as_str()`: Returns the normalized display name.
+- Implements `Display`, `AsRef<str>`, `From<String>`, `From<&String>`, `From<&str>`.
+- Serialization:
+  - `Custom("get_weather")` -> `"get_weather"`
+  - `WebSearch` -> `{"WebSearch": null}`
+
+### `ToolConfig`
+
+- `WebSearch(WebSearchConfig)`: Typed config for the built-in web-search tool.
+- `Custom(serde_json::Value)`: Arbitrary JSON config for custom tools.
+- Serialization:
+  - `Custom(json)` -> raw JSON value
+  - `WebSearch(config)` -> `{"WebSearch": {...}}`
 
 ### `ToolCall`
 
@@ -363,10 +398,11 @@ Implements `Stream<Item = Result<ChatStreamEvent>>`.
 ### `StreamEnd`
 
 - `captured_usage`: `Option<Usage>`.
+- `captured_stop_reason`: `Option<StopReason>`. Since v0.6.0.
 - `captured_content`: `Option<MessageContent>` (text, tools, thoughts; ordering: ThoughtSignature -> Text -> ToolCall).
-- `captured_reasoning_content`: Concatenated reasoning content.
+- `captured_reasoning_content`: Concatenated reasoning content when `ChatOptions.capture_reasoning_content` is enabled.
 - **Getters**: `captured_first_text()`, `captured_into_first_text()`, `captured_texts()`, `into_texts()`, `captured_tool_calls()`, `captured_into_tool_calls()`, `captured_thought_signatures()`, `captured_into_thought_signatures()`.
-- `into_assistant_message_for_tool_use()`: Returns a `ChatMessage` ready for the next request in a tool-use flow.
+- `into_assistant_message_for_tool_use()`: Returns a `ChatMessage` ready for the next request in a tool-use flow, preserving thought-signature ordering and attaching reasoning via `with_reasoning_content(...)` when present. Since v0.6.0.
 
 ## Printer Utility
 
@@ -448,7 +484,7 @@ Single-value-per-name HTTP header map.
 
 Enum identifying the AI provider adapter.
 
-Variants: `OpenAI`, `OpenAIResp`, `Gemini`, `Anthropic`, `Fireworks`, `Together`, `Groq`, `Mimo`, `Nebius`, `Xai`, `DeepSeek`, `Zai`, `BigModel`, `Cohere`, `Ollama`.
+Variants: `OpenAI`, `OpenAIResp`, `Gemini`, `Anthropic`, `Fireworks`, `Together`, `Groq`, `Mimo`, `Nebius`, `Xai`, `DeepSeek`, `Zai`, `BigModel`, `Cohere`, `Ollama`, `OllamaCloud`, `GithubCopilot`.
 
 - `as_str()`: Display name (e.g., `"OpenAI"`, `"xAi"`).
 - `as_lower_str()`: Lowercase name (e.g., `"openai"`, `"xai"`).
@@ -460,19 +496,19 @@ Variants: `OpenAI`, `OpenAIResp`, `Gemini`, `Anthropic`, `Fireworks`, `Together`
 ## Model Resolution Nuances
 
 - **Auto-detection** (`AdapterKind::from_model`):
-  - `gpt-*` (except `gpt-oss`), `o1*`, `o3*`, `o4*`, `chatgpt*`, `codex*`, `text-embedding*` -> `OpenAI` (or `OpenAIResp` for codex/pro variants).
+  - `gpt-*` (except `gpt-oss`), `o1*`, `o3*`, `o4*`, `chatgpt*`, `codex*`, `text-embedding*` -> `OpenAI` (or `OpenAIResp` for gpt models with `codex`/`pro` in name).
   - `gemini*` -> `Gemini`.
   - `claude*` -> `Anthropic`.
   - Contains `"fireworks"` -> `Fireworks`.
   - In Groq model list -> `Groq`.
   - In Mimo model list -> `Mimo`.
   - `command*`, `embed-*` -> `Cohere`.
-  - In DeepSeek model list -> `DeepSeek`.
+  - `deepseek-chat*` and `deepseek-reasoner*` -> `DeepSeek`.
   - `grok*` -> `Xai`.
   - `glm*` -> `Zai`.
   - Fallback -> `Ollama`.
 - **Namespacing**: `namespace::model_name` (e.g., `together::meta-llama/...`, `nebius::Qwen/...`).
-  - Namespace matches adapter lowercase name (e.g., `openai::`, `gemini::`, `anthropic::`, `fireworks::`, `together::`, `groq::`, `mimo::`, `nebius::`, `xai::`, `deepseek::`, `zai::`, `bigmodel::`, `aliyun::`, `cohere::`, `ollama::`, `openai_resp::`)
+  - Namespace matches adapter lowercase name (e.g., `openai::`, `gemini::`, `anthropic::`, `fireworks::`, `together::`, `groq::`, `mimo::`, `nebius::`, `xai::`, `deepseek::`, `zai::`, `bigmodel::`, `aliyun::`, `cohere::`, `ollama::`, `ollama_cloud::`, `openai_resp::`, `github_copilot::`)
   - Special: `coding::` namespace maps to `Zai` adapter.
 - **Ollama Fallback**: Unrecognized non-namespaced names default to `Ollama` adapter (localhost:11434).
 - **Reasoning Normalization**: Automatic extraction for DeepSeek/Ollama `<think>` blocks when `normalize_reasoning_content` is enabled.

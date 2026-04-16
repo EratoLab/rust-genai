@@ -4,8 +4,8 @@ use crate::adapter::openai_resp::OpenAIRespStreamer;
 use crate::adapter::openai_resp::resp_types::RespResponse;
 use crate::adapter::{Adapter, AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{
-	ChatOptionsSet, ChatRequest, ChatResponse, ChatResponseFormat, ChatRole, ChatStream, ChatStreamResponse,
-	ContentPart, MessageContent, ReasoningEffort, Tool, ToolConfig, ToolName, Usage,
+	CacheControl, ChatOptionsSet, ChatRequest, ChatResponse, ChatResponseFormat, ChatRole, ChatStream,
+	ChatStreamResponse, ContentPart, MessageContent, ReasoningEffort, StopReason, Tool, ToolConfig, ToolName, Usage,
 };
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::{EventSourceStream, WebResponse};
@@ -37,14 +37,9 @@ impl Adapter for OpenAIRespAdapter {
 	}
 
 	/// Note: Currently returns the common models (see above)
-	async fn all_model_names(kind: AdapterKind) -> Result<Vec<String>> {
+	async fn all_model_names(kind: AdapterKind, endpoint: Endpoint, auth: AuthData) -> Result<Vec<String>> {
 		//
-		OpenAIAdapter::list_model_names_for_end_target(
-			kind,
-			OpenAIAdapter::default_endpoint(),
-			OpenAIAdapter::default_auth(),
-		)
-		.await
+		OpenAIAdapter::list_model_names_for_end_target(kind, endpoint, auth).await
 	}
 
 	fn get_service_url(model: &ModelIden, service_type: ServiceType, endpoint: Endpoint) -> Result<String> {
@@ -57,7 +52,7 @@ impl Adapter for OpenAIRespAdapter {
 	/// - `.store = false` - To maintain consistent behavior with other chat completions, store is set to false
 	/// - `.instructions` For now we do not use the top ".instructions" (genai::ChatRequest.system),
 	///   but just add this top system as a regular system message.
-	/// - `.summary` right now, supporting "generate reasoning summary" is not supported
+	/// - `.summary` reasoning summary is opt-in via `ChatOptions.capture_reasoning_content(true)` → `"detailed"`
 	///
 	fn to_web_request_data(
 		target: ServiceTarget,
@@ -95,28 +90,75 @@ impl Adapter for OpenAIRespAdapter {
 				(None, model_name)
 			};
 
+		// -- Extract system prompt before consuming chat_req.
+		// Use the Responses API `instructions` field instead of an input system message.
+		// `instructions` is the canonical way to set system prompt in the Responses API:
+		// - It overrides on each call (important for stateful sessions with previous_response_id)
+		// - It separates instructions from conversation items
+		// - Inline system messages (ChatRole::System in messages) still go to input as-is
+		let instructions = chat_req.system.clone();
+		let mut chat_req = chat_req;
+		chat_req.system = None;
+
+		// -- Extract stateful session fields before consuming chat_req
+		let previous_response_id = chat_req.previous_response_id.clone();
+		let explicit_store = chat_req.store;
+
 		// -- Build the basic payload
 		let OpenAIRespRequestParts {
 			input_items: messages,
 			tools,
 		} = Self::into_openai_request_parts(&model, chat_req)?;
 
-		// IMPORTANT: `store = false` - To maintain consistent behavior with other chat completions, store is set to false
+		// Store: always opt-in. If not explicitly set, default is false.
+		// Privacy first: we never implicitly set store=true, even when previous_response_id is set.
+		// If previous_response_id is set without store=true, log a warning — the caller must be explicit.
+		let store = explicit_store.unwrap_or(false);
+		if previous_response_id.is_some() && explicit_store != Some(true) {
+			tracing::warn!(
+				"previous_response_id is set but store is not explicitly true — \
+				 stateful session requires store=true to work. Set `store: Some(true)` explicitly."
+			);
+		}
+
 		let mut payload = json!({
-			"store": false,
+			"store": store,
 			"model": model_name,
 			"input": messages,
 			"stream": stream,
 		});
 
+		// -- System prompt as instructions
+		if let Some(instructions) = &instructions {
+			payload.x_insert("instructions", instructions.as_str())?;
+		}
+
+		// -- Stateful session: add previous_response_id
+		if let Some(prev_id) = &previous_response_id {
+			payload.x_insert("previous_response_id", prev_id.as_str())?;
+		}
+
 		// -- Set reasoning effort
 		if let Some(reasoning_effort) = reasoning_effort
 			&& let Some(keyword) = reasoning_effort.as_keyword()
 		{
-			// NOTE: For now, we do not set the "summary" property to generate the reasoning summary
+			let mut reasoning_obj = json!({"effort": keyword});
 
-			payload.x_insert("reasoning", json!({"effort": keyword}))?;
-			// TODO: needs to find a way to add summary: auto, concise, detailed
+			// Opt-in: only request detailed reasoning summaries when the caller
+			// explicitly asks for reasoning content capture.
+			if chat_options.capture_reasoning_content() == Some(true) {
+				reasoning_obj
+					.x_insert("summary", "detailed")
+					.map_err(|e| Error::Internal(format!("reasoning summary insert: {e}")))?;
+			}
+
+			payload.x_insert("reasoning", reasoning_obj)?;
+		}
+
+		// -- Opt-in: request encrypted reasoning content (thought signatures)
+		// when the caller explicitly asks for reasoning content capture.
+		if chat_options.capture_reasoning_content() == Some(true) {
+			payload.x_insert("include", json!(["reasoning.encrypted_content"]))?;
 		}
 
 		// -- Tools
@@ -129,25 +171,13 @@ impl Adapter for OpenAIRespAdapter {
 			match response_format {
 				ChatResponseFormat::JsonMode => Some(json!({"type": "json_object"})),
 				ChatResponseFormat::JsonSpec(st_json) => {
-					// "type": "json_schema", "json_schema": {...}
-					let mut schema = st_json.schema.clone();
-					schema.x_walk(|parent_map, name| {
-						if name == "type" {
-							let typ = parent_map.get("type").and_then(|v| v.as_str()).unwrap_or("");
-							if typ == "object" {
-								parent_map.insert("additionalProperties".to_string(), false.into());
-							}
-						}
-						true
-					});
-
 					// Flatten for OpenAI Responses
 					Some(json!({
 						"type": "json_schema",
 						"name": st_json.name.clone(),
 						"strict": true,
 						// TODO: add description
-						"schema": schema,
+						"schema": st_json.schema_with_additional_properties_false(),
 					}))
 				}
 			}
@@ -180,13 +210,28 @@ impl Adapter for OpenAIRespAdapter {
 		}
 
 		if let Some(max_tokens) = chat_options.max_tokens() {
-			payload.x_insert("max_tokens", max_tokens)?;
+			payload.x_insert("max_output_tokens", max_tokens)?;
 		}
 		if let Some(top_p) = chat_options.top_p() {
 			payload.x_insert("top_p", top_p)?;
 		}
 		if let Some(seed) = chat_options.seed() {
 			payload.x_insert("seed", seed)?;
+		}
+
+		// -- OpenAI prompt cache options
+		if let Some(prompt_cache_key) = chat_options.prompt_cache_key() {
+			payload.x_insert("prompt_cache_key", prompt_cache_key)?;
+		}
+		if let Some(cache_control) = chat_options.cache_control() {
+			let prompt_cache_retention = match cache_control {
+				CacheControl::Memory | CacheControl::Ephemeral => Some("in_memory"),
+				CacheControl::Ephemeral24h => Some("24h"),
+				CacheControl::Ephemeral5m | CacheControl::Ephemeral1h => None,
+			};
+			if let Some(prompt_cache_retention) = prompt_cache_retention {
+				payload.x_insert("prompt_cache_retention", prompt_cache_retention)?;
+			}
 		}
 
 		Ok(WebRequestData { url, headers, payload })
@@ -224,8 +269,10 @@ impl Adapter for OpenAIRespAdapter {
 			reasoning_content,
 			model_iden,
 			provider_model_iden,
+			stop_reason: Some(StopReason::from(resp.status)),
 			usage,
 			captured_raw_body,
+			response_id: Some(resp.id),
 		})
 	}
 
@@ -386,6 +433,7 @@ impl OpenAIRespAdapter {
 								ContentPart::ToolCall(_) => (),
 								ContentPart::ToolResponse(_) => (),
 								ContentPart::ThoughtSignature(_) => (),
+								ContentPart::ReasoningContent(_) => (),
 								// Custom are ignored for this logic
 								ContentPart::Custom(_) => {}
 							}
@@ -431,6 +479,7 @@ impl OpenAIRespAdapter {
 							ContentPart::Binary(_) => {}
 							ContentPart::ToolResponse(_) => {}
 							ContentPart::ThoughtSignature(_) => {}
+							ContentPart::ReasoningContent(_) => {}
 							// Custom are ignored for this logic
 							ContentPart::Custom(_) => {}
 						}
@@ -477,6 +526,7 @@ impl OpenAIRespAdapter {
 			name,
 			description,
 			schema,
+			strict,
 			config,
 		} = tool;
 
@@ -503,14 +553,29 @@ impl OpenAIRespAdapter {
 				tool_value
 			}
 			name => {
+				let strict = strict.unwrap_or(false);
+				let mut parameters = schema;
+
+				// When strict mode is enabled, OpenAI requires `additionalProperties: false`
+				// on every object node in the schema.
+				if strict && let Some(ref mut schema_val) = parameters {
+					schema_val.x_walk(|parent_map, prop_name| {
+						if prop_name == "type" {
+							let typ = parent_map.get("type").and_then(|v| v.as_str()).unwrap_or("");
+							if typ == "object" {
+								parent_map.insert("additionalProperties".to_string(), false.into());
+							}
+						}
+						true
+					});
+				}
+
 				json!({
 					"type": "function",
 					"name": name,
 					"description": description,
-					"parameters": schema,
-					// TODO: If we need to support `strict: true` we need to add additionalProperties: false into the schema
-					//       above (like structured output)
-					"strict": false,
+					"parameters": parameters,
+					"strict": strict,
 				})
 			}
 		};

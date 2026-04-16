@@ -4,7 +4,17 @@ use std::sync::Arc;
 use crate::adapter::adapters::support::get_api_key;
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{BinarySource, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart, ImageRequest, ImageResponse, ReasoningEffort, Usage};
+<<<<<<< HEAD
+use crate::chat::{
+	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
+	ImageRequest, ImageResponse, ReasoningEffort, Usage,
+};
+=======
+use crate::chat::{
+	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
+	ReasoningEffort, Usage,
+};
+>>>>>>> upstream/main
 use crate::resolver::{AuthData, Endpoint};
 use crate::{Error, Headers, Result};
 use crate::{ModelIden, ServiceTarget};
@@ -13,6 +23,22 @@ use tracing::error;
 use tracing::warn;
 use value_ext::JsonValueExt;
 use crate::webc::WebResponse;
+
+fn insert_openai_reasoning_effort(payload: &mut Value, effort: &ReasoningEffort) -> Result<()> {
+	let keyword = match effort {
+		ReasoningEffort::None => "none",
+		ReasoningEffort::Low => "low",
+		ReasoningEffort::Medium => "medium",
+		ReasoningEffort::High => "high",
+		ReasoningEffort::XHigh | ReasoningEffort::Max => "xhigh",
+		ReasoningEffort::Minimal => "minimal",
+		ReasoningEffort::Budget(_) => return Ok(()),
+	};
+
+	payload.x_insert("reasoning_effort", keyword)?;
+
+	Ok(())
+}
 
 /// Support functions for other adapters that share OpenAI APIs
 impl OpenAIAdapter {
@@ -35,7 +61,7 @@ impl OpenAIAdapter {
 		};
 		let mut full_url = base_url.join(suffix).map_err(|err| {
 			Error::Internal(format!(
-				"Cannot joing suffix '{suffix}' for url: {base_url}. Cause:\n{err}"
+				"Cannot join suffix '{suffix}' for url: {base_url}. Cause:\n{err}"
 			))
 		})?;
 		full_url.set_query(original_query_params);
@@ -88,10 +114,8 @@ impl OpenAIAdapter {
 		});
 
 		// -- Set reasoning effort
-		if let Some(reasoning_effort) = reasoning_effort
-			&& let Some(keyword) = reasoning_effort.as_keyword()
-		{
-			payload.x_insert("reasoning_effort", keyword)?;
+		if let Some(reasoning_effort) = reasoning_effort {
+			insert_openai_reasoning_effort(&mut payload, &reasoning_effort)?;
 		}
 
 		// -- Set verbosity
@@ -112,25 +136,13 @@ impl OpenAIAdapter {
 				ChatResponseFormat::JsonMode => Some(json!({"type": "json_object"})),
 				ChatResponseFormat::JsonSpec(st_json) => {
 					// "type": "json_schema", "json_schema": {...}
-
-					let mut schema = st_json.schema.clone();
-					schema.x_walk(|parent_map, name| {
-						if name == "type" {
-							let typ = parent_map.get("type").and_then(|v| v.as_str()).unwrap_or("");
-							if typ == "object" {
-								parent_map.insert("additionalProperties".to_string(), false.into());
-							}
-						}
-						true
-					});
-
 					Some(json!({
 						"type": "json_schema",
 						"json_schema": {
 							"name": st_json.name.clone(),
 							"strict": true,
 							// TODO: add description
-							"schema": schema,
+							"schema": st_json.schema_with_additional_properties_false(),
 						}
 					}))
 				}
@@ -156,32 +168,23 @@ impl OpenAIAdapter {
 			payload.x_insert("stop", options_set.stop_sequences())?;
 		}
 
+		// GPT-5.x and o-series models require "max_completion_tokens" instead of "max_tokens"
+		let max_tokens_key = if model_name.starts_with("gpt-5")
+			|| model_name.starts_with("o1")
+			|| model_name.starts_with("o2")
+			|| model_name.starts_with("o3")
+			|| model_name.starts_with("o4")
+		{
+			"max_completion_tokens"
+		} else {
+			"max_tokens"
+		};
 		if let Some(max_tokens) = options_set.max_tokens() {
-			// Quickfix for changed name of parameter
-			// See https://github.com/jeremychone/rust-genai/issues/73
-			if model.model_name.starts_with("o1-")
-				|| model.model_name.starts_with("o2-")
-				|| model.model_name.starts_with("o3-")
-				|| model.model_name.starts_with("o4-")
-			{
-				payload.x_insert("max_completion_tokens", max_tokens)?;
-			} else {
-				payload.x_insert("max_tokens", max_tokens)?;
-			}
+			payload.x_insert(max_tokens_key, max_tokens)?;
 		} else if let Some(custom) = custom.as_ref()
 			&& let Some(max_tokens) = custom.default_max_tokens
 		{
-			// Quickfix for changed name of parameter
-			// See https://github.com/jeremychone/rust-genai/issues/73
-			if model.model_name.starts_with("o1-")
-				|| model.model_name.starts_with("o2-")
-				|| model.model_name.starts_with("o3-")
-				|| model.model_name.starts_with("o4-")
-			{
-				payload.x_insert("max_completion_tokens", max_tokens)?;
-			} else {
-				payload.x_insert("max_tokens", max_tokens)?;
-			}
+			payload.x_insert(max_tokens_key, max_tokens)?;
 		}
 		if let Some(top_p) = options_set.top_p() {
 			payload.x_insert("top_p", top_p)?;
@@ -193,6 +196,21 @@ impl OpenAIAdapter {
 			&& let Some(keyword) = service_tier.as_keyword()
 		{
 			payload.x_insert("service_tier", keyword)?;
+		}
+
+		// -- OpenAI prompt cache options
+		if let Some(prompt_cache_key) = options_set.prompt_cache_key() {
+			payload.x_insert("prompt_cache_key", prompt_cache_key)?;
+		}
+		if let Some(cache_control) = options_set.cache_control() {
+			let prompt_cache_retention = match cache_control {
+				CacheControl::Memory | CacheControl::Ephemeral => Some("in_memory"),
+				CacheControl::Ephemeral24h => Some("24h"),
+				CacheControl::Ephemeral5m | CacheControl::Ephemeral1h => None,
+			};
+			if let Some(prompt_cache_retention) = prompt_cache_retention {
+				payload.x_insert("prompt_cache_retention", prompt_cache_retention)?;
+			}
 		}
 
 		Ok(WebRequestData { url, headers, payload })
@@ -314,6 +332,7 @@ impl OpenAIAdapter {
 								ContentPart::ToolCall(_) => (),
 								ContentPart::ToolResponse(_) => (),
 								ContentPart::ThoughtSignature(_) => (),
+								ContentPart::ReasoningContent(_) => (),
 								// Custom are ignored for this logic
 								ContentPart::Custom(_) => {}
 							}
@@ -324,9 +343,9 @@ impl OpenAIAdapter {
 
 				// Assistant - For now support Text and ToolCalls
 				ChatRole::Assistant => {
-					// -- If we have only text, then, we jjust returned the joined_texts
 					let mut texts: Vec<String> = Vec::new();
 					let mut tool_calls: Vec<Value> = Vec::new();
+					let mut reasoning_parts: Vec<String> = Vec::new();
 					for part in msg.content {
 						match part {
 							ContentPart::Text(text) => texts.push(text),
@@ -341,6 +360,8 @@ impl OpenAIAdapter {
 									}
 								}))
 							}
+							// Extract reasoning content parts to hoist into sibling field
+							ContentPart::ReasoningContent(reasoning) => reasoning_parts.push(reasoning),
 
 							// TODO: Probably need towarn on this one (probably need to add binary here)
 							ContentPart::Binary(_) => (),
@@ -354,6 +375,12 @@ impl OpenAIAdapter {
 					let mut message = json!({"role": "assistant", "content": content});
 					if !tool_calls.is_empty() {
 						message.x_insert("tool_calls", tool_calls)?;
+					}
+					// Echo reasoning_content back for providers that require it (Kimi, DeepSeek)
+					// Note: In practice there is at most one ReasoningContent part per message,
+					//       but we join defensively in case multiple parts are present.
+					if !reasoning_parts.is_empty() {
+						message.x_insert("reasoning_content", reasoning_parts.join("\n"))?;
 					}
 					messages.push(message);
 				}
@@ -380,18 +407,30 @@ impl OpenAIAdapter {
 			tools
 				.into_iter()
 				.map(|tool| {
-					// TODO: Need to handle the error correctly
-					// TODO: Needs to have a custom serializer (tool should not have to match to a provider)
-					// NOTE: Right now, low probability, so, we just return null if cannot convert to value.
+					let strict = tool.strict.unwrap_or(false);
+					let mut parameters = tool.schema;
+
+					// When strict mode is enabled, OpenAI requires `additionalProperties: false`
+					// on every object node in the schema.
+					if strict && let Some(ref mut schema_val) = parameters {
+						schema_val.x_walk(|parent_map, prop_name| {
+							if prop_name == "type" {
+								let typ = parent_map.get("type").and_then(|v| v.as_str()).unwrap_or("");
+								if typ == "object" {
+									parent_map.insert("additionalProperties".to_string(), false.into());
+								}
+							}
+							true
+						});
+					}
+
 					json!({
 						"type": "function",
 						"function": {
 							"name": tool.name,
 							"description": tool.description,
-							"parameters": tool.schema,
-							// TODO: If we need to support `strict: true` we need to add additionalProperties: false into the schema
-							//       above (like structured output)
-							"strict": false,
+							"parameters": parameters,
+							"strict": strict,
 						}
 					})
 				})
@@ -534,3 +573,64 @@ struct OpenAIRequestParts {
 }
 
 // endregion: --- Support
+
+// region:    --- Tests
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::adapter::AdapterKind;
+	use crate::chat::{ChatMessage, ContentPart, MessageContent, ToolCall};
+
+	fn test_model() -> ModelIden {
+		ModelIden::new(AdapterKind::OpenAI, "test-model")
+	}
+
+	/// When an assistant message carries reasoning_content, it must appear
+	/// in the serialized JSON so providers that require it (Kimi, DeepSeek)
+	/// don't reject the request.
+	#[test]
+	fn test_reasoning_content_serialized_on_assistant_message() {
+		let tool_call = ToolCall {
+			call_id: "call_1".to_string(),
+			fn_name: "get_weather".to_string(),
+			fn_arguments: serde_json::json!({"city": "Paris"}),
+			thought_signatures: None,
+		};
+
+		let assistant_msg = ChatMessage::assistant(MessageContent::from_parts(vec![
+			ContentPart::Text("Let me check.".to_string()),
+			ContentPart::ToolCall(tool_call),
+		]))
+		.with_reasoning_content(Some("I should look up the weather.".to_string()));
+
+		let chat_req = ChatRequest::new(vec![ChatMessage::user("What's the weather in Paris?"), assistant_msg]);
+
+		let parts = OpenAIAdapter::into_openai_request_parts(&test_model(), chat_req).expect("should serialize");
+
+		// The assistant message is the second message (after user)
+		let assistant_json = &parts.messages[1];
+		assert_eq!(assistant_json["role"], "assistant");
+		assert_eq!(
+			assistant_json["reasoning_content"], "I should look up the weather.",
+			"reasoning_content should be present in serialized assistant message"
+		);
+	}
+
+	/// When reasoning_content is None, the field should not appear in the JSON.
+	#[test]
+	fn test_no_reasoning_content_when_absent() {
+		let chat_req = ChatRequest::new(vec![ChatMessage::user("Hello"), ChatMessage::assistant("Hi there!")]);
+
+		let parts = OpenAIAdapter::into_openai_request_parts(&test_model(), chat_req).expect("should serialize");
+
+		let assistant_json = &parts.messages[1];
+		assert_eq!(assistant_json["role"], "assistant");
+		assert!(
+			assistant_json.get("reasoning_content").is_none(),
+			"reasoning_content should be absent when not set"
+		);
+	}
+}
+
+// endregion: --- Tests

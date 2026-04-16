@@ -1,7 +1,7 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::gemini::{GeminiAdapter, GeminiChatResponse};
 use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
-use crate::chat::{ChatOptionsSet, ToolCall};
+use crate::chat::{ChatOptionsSet, StopReason, ToolCall};
 use crate::webc::WebStream;
 use crate::{Error, ModelIden, Result};
 use serde_json::Value;
@@ -61,10 +61,12 @@ impl futures::Stream for GeminiStreamer {
 						"]" => {
 							let inter_stream_end = InterStreamEnd {
 								captured_usage: self.captured_data.usage.take(),
+								captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 								captured_text_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
 								captured_tool_calls: self.captured_data.tool_calls.take(),
 								captured_thought_signatures: self.captured_data.thought_signatures.take(),
+								captured_response_id: None,
 							};
 
 							return Poll::Ready(Some(Ok(InterStreamEvent::End(inter_stream_end))));
@@ -95,13 +97,24 @@ impl futures::Stream for GeminiStreamer {
 									}
 								};
 
-							let GeminiChatResponse { content, usage } = gemini_response;
+							let GeminiChatResponse {
+								content,
+								usage,
+								stop_reason,
+							} = gemini_response;
 
-							// -- Extract text and toolcall
-							// WARNING: Assume that only ONE tool call per message (or take the last one)
+							// -- Capture stop_reason if present (typically in the last chunk)
+							if stop_reason.is_some() {
+								self.captured_data.stop_reason = stop_reason;
+							}
+
+							// -- Extract text, reasoning, and tool calls from content parts.
+							// Gemini can return multiple functionCall parts in a single
+							// streaming chunk (parallel tool calls), so we collect all of
+							// them instead of keeping only the last one.
 							let mut stream_text_content: String = String::new();
 							let mut stream_reasoning_content: Option<String> = None;
-							let mut stream_tool_call: Option<ToolCall> = None;
+							let mut stream_tool_calls: Vec<ToolCall> = Vec::new();
 							let mut stream_thought: Option<String> = None;
 
 							for g_content_item in content {
@@ -110,7 +123,10 @@ impl futures::Stream for GeminiStreamer {
 										stream_reasoning_content = Some(reasoning)
 									}
 									GeminiChatContent::Text(text) => stream_text_content.push_str(&text),
-									GeminiChatContent::ToolCall(tool_call) => stream_tool_call = Some(tool_call),
+									GeminiChatContent::Binary(_) => {
+										// For now, we do not stream binary content.
+									}
+									GeminiChatContent::ToolCall(tool_call) => stream_tool_calls.push(tool_call),
 									GeminiChatContent::ThoughtSignature(thought) => stream_thought = Some(thought),
 								}
 							}
@@ -164,8 +180,8 @@ impl futures::Stream for GeminiStreamer {
 								self.pending_events.push_back(InterStreamEvent::Chunk(stream_text_content));
 							}
 
-							// 3. Tool Call
-							if let Some(tool_call) = stream_tool_call {
+							// 3. Tool Calls (supports parallel tool calls from Gemini)
+							for tool_call in stream_tool_calls {
 								if self.options.capture_tool_calls {
 									match self.captured_data.tool_calls {
 										Some(ref mut tool_calls) => tool_calls.push(tool_call.clone()),
@@ -173,7 +189,7 @@ impl futures::Stream for GeminiStreamer {
 									}
 								}
 								if self.options.capture_usage {
-									self.captured_data.usage = Some(usage);
+									self.captured_data.usage = Some(usage.clone());
 								}
 								self.pending_events.push_back(InterStreamEvent::ToolCallChunk(tool_call));
 							}

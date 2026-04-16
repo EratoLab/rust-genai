@@ -1,6 +1,15 @@
 use crate::adapter::openai::OpenAIStreamer;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, ImageRequest, ImageResponse, MessageContent, ToolCall};
+<<<<<<< HEAD
+use crate::chat::{
+	ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, ImageRequest, ImageResponse,
+	MessageContent, StopReason, ToolCall,
+};
+=======
+use crate::chat::{
+	ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, MessageContent, StopReason, ToolCall,
+};
+>>>>>>> upstream/main
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::{EventSourceStream, WebResponse};
 use crate::{Error, Result};
@@ -32,8 +41,8 @@ impl Adapter for OpenAIAdapter {
 	}
 
 	/// Note: Currently returns the common models (see above)
-	async fn all_model_names(kind: AdapterKind) -> Result<Vec<String>> {
-		OpenAIAdapter::list_model_names_for_end_target(kind, Self::default_endpoint(), Self::default_auth()).await
+	async fn all_model_names(kind: AdapterKind, endpoint: Endpoint, auth: AuthData) -> Result<Vec<String>> {
+		OpenAIAdapter::list_model_names_for_end_target(kind, endpoint, auth).await
 	}
 
 	fn get_service_url(model: &ModelIden, service_type: ServiceType, endpoint: Endpoint) -> Result<String> {
@@ -69,8 +78,15 @@ impl Adapter for OpenAIAdapter {
 		// -- Capture the content
 		let mut content: MessageContent = MessageContent::default();
 		let mut reasoning_content: Option<String> = None;
+		let mut stop_reason: Option<StopReason> = None;
 
 		if let Ok(Some(mut first_choice)) = body.x_take::<Option<Value>>("/choices/0") {
+			stop_reason = first_choice
+				.x_take::<Option<String>>("finish_reason")
+				.ok()
+				.flatten()
+				.map(StopReason::from);
+
 			// Check if reasoning is present
 			// Can be in two places:
 			// - /message/reasoning
@@ -120,8 +136,10 @@ impl Adapter for OpenAIAdapter {
 			reasoning_content,
 			model_iden,
 			provider_model_iden,
+			stop_reason,
 			usage,
 			captured_raw_body: None, // Set by the client exec_chat
+			response_id: None,
 		})
 	}
 
@@ -264,3 +282,56 @@ fn parse_tool_call(raw_tool_call: Value) -> Result<ToolCall> {
 }
 
 // endregion: --- Support
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::adapter::AdapterKind;
+	use reqwest::StatusCode;
+
+	fn test_model() -> ModelIden {
+		ModelIden::new(AdapterKind::OpenAI, "gpt-4o-mini")
+	}
+
+	#[test]
+	fn test_to_chat_response_captures_finish_reason_as_stop_reason() {
+		let web_response = WebResponse {
+			status: StatusCode::OK,
+			body: serde_json::json!({
+				"id": "chatcmpl-test",
+				"model": "gpt-4o-mini-2024-07-18",
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+				"choices": [{
+					"finish_reason": "stop",
+					"message": {"role": "assistant", "content": "hello"}
+				}]
+			}),
+		};
+
+		let response = OpenAIAdapter::to_chat_response(test_model(), web_response, ChatOptionsSet::default())
+			.expect("chat response");
+
+		assert_eq!(response.stop_reason, Some(StopReason::Completed("stop".to_string())));
+		assert_eq!(response.first_text(), Some("hello"));
+	}
+
+	#[test]
+	fn test_to_chat_response_stop_reason_none_when_missing() {
+		let web_response = WebResponse {
+			status: StatusCode::OK,
+			body: serde_json::json!({
+				"id": "chatcmpl-test",
+				"model": "gpt-4o-mini-2024-07-18",
+				"usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+				"choices": [{
+					"message": {"role": "assistant", "content": "hello"}
+				}]
+			}),
+		};
+
+		let response = OpenAIAdapter::to_chat_response(test_model(), web_response, ChatOptionsSet::default())
+			.expect("chat response");
+
+		assert_eq!(response.stop_reason, None);
+	}
+}

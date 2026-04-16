@@ -2,13 +2,50 @@ use crate::adapter::AdapterKind;
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
 use crate::adapter::openai::OpenAIAdapter;
-use crate::chat::{ChatOptionsSet, ToolCall};
+use crate::chat::{ChatOptionsSet, StopReason, ToolCall};
 use crate::webc::{Event, EventSourceStream};
 use crate::{Error, ModelIden, Result};
 use serde_json::Value;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use value_ext::JsonValueExt;
+
+fn take_stream_error(message_data: &mut Value, model_iden: &ModelIden) -> Option<Error> {
+	let error_body = message_data.x_take::<Value>("error").ok()?;
+	Some(Error::ChatResponse {
+		model_iden: model_iden.clone(),
+		body: error_body,
+	})
+}
+
+fn take_finish_reason_usage(
+	message_data: &mut Value,
+	adapter_kind: AdapterKind,
+	capture_usage: bool,
+) -> Option<crate::chat::Usage> {
+	if !capture_usage {
+		return None;
+	}
+
+	match adapter_kind {
+		AdapterKind::Groq => Some(
+			message_data
+				.x_take("/x_groq/usage")
+				.map(|v| OpenAIAdapter::into_usage(adapter_kind, v))
+				.unwrap_or_default(),
+		),
+		AdapterKind::DeepSeek | AdapterKind::Zai | AdapterKind::Fireworks | AdapterKind::Together => Some(
+			message_data
+				.x_take("usage")
+				.map(|v| OpenAIAdapter::into_usage(adapter_kind, v))
+				.unwrap_or_default(),
+		),
+		_ => message_data
+			.x_take("usage")
+			.ok()
+			.map(|v| OpenAIAdapter::into_usage(adapter_kind, v)),
+	}
+}
 
 pub struct OpenAIStreamer {
 	inner: EventSourceStream,
@@ -133,10 +170,12 @@ impl futures::Stream for OpenAIStreamer {
 						// Return the internal stream end
 						let inter_stream_end = InterStreamEnd {
 							captured_usage,
+							captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 							captured_text_content: self.captured_data.content.take(),
 							captured_reasoning_content: self.captured_data.reasoning_content.take(),
 							captured_tool_calls,
 							captured_thought_signatures: None,
+							captured_response_id: None,
 						};
 
 						return Poll::Ready(Some(Ok(InterStreamEvent::End(inter_stream_end))));
@@ -150,6 +189,10 @@ impl futures::Stream for OpenAIStreamer {
 							serde_error,
 						})?;
 
+					if let Some(error) = take_stream_error(&mut message_data, &self.options.model_iden) {
+						return Poll::Ready(Some(Err(error)));
+					}
+
 					let first_choice: Option<Value> = message_data.x_take("/choices/0").ok();
 
 					let adapter_kind = self.options.model_iden.adapter_kind;
@@ -161,9 +204,14 @@ impl futures::Stream for OpenAIStreamer {
 						// Since we support only a single choice, we can proceed,
 						// as there might be other messages, and the last one contains data: `[DONE]`
 						// NOTE: xAI has no `finish_reason` when not finished, so, need to just account for both null/absent
-						if let Ok(_finish_reason) = first_choice.x_take::<String>("finish_reason") {
+						if let Ok(Some(finish_reason)) = first_choice.x_take::<Option<String>>("finish_reason") {
+							self.captured_data.stop_reason = Some(finish_reason);
 							// NOTE: Some providers (e.g., Ollama) send tool_calls AND finish_reason in the same message.
 							// We need to capture tool_calls here before continuing to the next message.
+							// Capture tool_calls that arrive in the same chunk as finish_reason.
+							// After capturing, emit the first ToolCallChunk so downstream
+							// consumers (e.g. agent loops) see the tool call event.
+							let mut first_tool_call_event: Option<ToolCall> = None;
 							if let Ok(delta_tool_calls) = first_choice.x_take::<Value>("/delta/tool_calls")
 								&& delta_tool_calls != Value::Null
 								&& let Some(delta_tool_calls) = delta_tool_calls.as_array()
@@ -180,33 +228,56 @@ impl futures::Stream for OpenAIStreamer {
 										let fn_name = function.x_take::<String>("name").unwrap_or_default();
 										let arguments = function.x_take::<String>("arguments").unwrap_or_default();
 
-										self.capture_tool_call(index as usize, call_id, fn_name, arguments);
+										let tc = self.capture_tool_call(index as usize, call_id, fn_name, arguments);
+										if first_tool_call_event.is_none() {
+											first_tool_call_event = Some(tc);
+										}
 									}
 								}
 							}
 
-							// NOTE: For Groq, the usage is captured when finish_reason indicates stopping, and in the `/x_groq/usage`
-							if self.options.capture_usage {
-								match adapter_kind {
-									AdapterKind::Groq => {
-										let usage = message_data
-											.x_take("/x_groq/usage")
-											.map(|v| OpenAIAdapter::into_usage(adapter_kind, v))
-											.unwrap_or_default(); // permissive for now
-										self.captured_data.usage = Some(usage)
+							if let Some(usage) =
+								take_finish_reason_usage(&mut message_data, adapter_kind, self.options.capture_usage)
+							{
+								self.captured_data.usage = Some(usage);
+							}
+
+							// NOTE: Some providers (e.g., mistral) send delta/content AND finish_reason
+							// in the same SSE message. We must capture and emit that final content chunk
+							// before continuing to the next message, otherwise it is silently lost.
+							let content = first_choice.x_take::<Option<String>>("/delta/content").ok().flatten();
+							let reasoning_content = first_choice
+								.x_take::<Option<String>>("/delta/reasoning_content")
+								.ok()
+								.flatten()
+								.or_else(|| first_choice.x_take::<Option<String>>("/delta/reasoning").ok().flatten());
+
+							if let Some(content) = content
+								&& !content.is_empty()
+							{
+								if self.options.capture_content {
+									match self.captured_data.content {
+										Some(ref mut c) => c.push_str(&content),
+										None => self.captured_data.content = Some(content.clone()),
 									}
-									AdapterKind::DeepSeek
-									| AdapterKind::Zai
-									| AdapterKind::Fireworks
-									| AdapterKind::Together => {
-										let usage = message_data
-											.x_take("usage")
-											.map(|v| OpenAIAdapter::into_usage(adapter_kind, v))
-											.unwrap_or_default();
-										self.captured_data.usage = Some(usage)
-									}
-									_ => (), // do nothing, will be captured the OpenAI way
 								}
+								return Poll::Ready(Some(Ok(InterStreamEvent::Chunk(content))));
+							} else if let Some(reasoning_content) = reasoning_content
+								&& !reasoning_content.is_empty()
+							{
+								if self.options.capture_reasoning_content {
+									match self.captured_data.reasoning_content {
+										Some(ref mut c) => c.push_str(&reasoning_content),
+										None => self.captured_data.reasoning_content = Some(reasoning_content.clone()),
+									}
+								}
+								return Poll::Ready(Some(Ok(InterStreamEvent::ReasoningChunk(reasoning_content))));
+							}
+
+							// If we captured a tool call in the finish_reason chunk,
+							// emit it as a ToolCallChunk so the agent loop sees it.
+							if let Some(tc) = first_tool_call_event {
+								return Poll::Ready(Some(Ok(InterStreamEvent::ToolCallChunk(tc))));
 							}
 
 							continue;
@@ -317,5 +388,77 @@ impl futures::Stream for OpenAIStreamer {
 			}
 		}
 		Poll::Pending
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::adapter::AdapterKind;
+
+	fn test_model() -> ModelIden {
+		ModelIden::new(AdapterKind::OpenAI, "test-model")
+	}
+
+	#[test]
+	fn test_take_stream_error_reads_openai_error_payload() {
+		let mut message_data = serde_json::json!({
+			"error": {
+				"message": "Error in input stream",
+				"type": "server_error",
+			}
+		});
+
+		let err = take_stream_error(&mut message_data, &test_model()).expect("expected stream error");
+		match err {
+			Error::ChatResponse { body, .. } => {
+				assert_eq!(body["message"], "Error in input stream");
+				assert_eq!(body["type"], "server_error");
+			}
+			other => panic!("unexpected error variant: {other:?}"),
+		}
+	}
+
+	#[test]
+	fn test_take_stream_error_none_when_error_key_missing() {
+		let mut message_data = serde_json::json!({
+			"choices": [{"delta": {"content": "hi"}}]
+		});
+		assert!(take_stream_error(&mut message_data, &test_model()).is_none());
+	}
+
+	#[test]
+	fn test_take_finish_reason_usage_reads_inline_openai_usage() {
+		let mut message_data = serde_json::json!({
+			"usage": {
+				"prompt_tokens": 11,
+				"completion_tokens": 3,
+				"total_tokens": 14
+			}
+		});
+
+		let usage =
+			take_finish_reason_usage(&mut message_data, AdapterKind::OpenAI, true).expect("usage should be captured");
+
+		assert_eq!(usage.prompt_tokens, Some(11));
+		assert_eq!(usage.completion_tokens, Some(3));
+		assert_eq!(usage.total_tokens, Some(14));
+		assert!(message_data.get("usage").is_some_and(Value::is_null));
+	}
+
+	#[test]
+	fn test_take_finish_reason_usage_respects_capture_flag() {
+		let mut message_data = serde_json::json!({
+			"usage": {
+				"prompt_tokens": 11,
+				"completion_tokens": 3,
+				"total_tokens": 14
+			}
+		});
+
+		let usage = take_finish_reason_usage(&mut message_data, AdapterKind::OpenAI, false);
+
+		assert!(usage.is_none());
+		assert_eq!(message_data["usage"]["prompt_tokens"], 11);
 	}
 }

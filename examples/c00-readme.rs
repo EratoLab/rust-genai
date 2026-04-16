@@ -5,19 +5,22 @@ use genai::chat::printer::{PrintChatStreamOptions, print_chat_stream};
 use genai::chat::{ChatMessage, ChatRequest};
 use tracing_subscriber::EnvFilter;
 
-const MODEL_OPENAI: &str = "gpt-4o-mini"; // o1-mini, gpt-4o-mini
+const MODEL_OPENAI: &str = "gpt-5.4-mini"; //
 const MODEL_ANTHROPIC: &str = "claude-3-haiku-20240307";
 // or namespaced with simple anme "fireworks::qwen3-30b-a3b", or "fireworks::accounts/fireworks/models/qwen3-30b-a3b"
-const MODEL_FIREWORKS: &str = "accounts/fireworks/models/qwen3-30b-a3b";
+const MODEL_FIREWORKS: &str = "fireworks::gpt-oss-20b";
 const MODEL_TOGETHER: &str = "together::openai/gpt-oss-20b";
 const MODEL_GEMINI: &str = "gemini-2.0-flash";
-const MODEL_GROQ: &str = "llama-3.1-8b-instant";
-const MODEL_OLLAMA: &str = "gemma:2b"; // sh: `ollama pull gemma:2b`
+const MODEL_GROQ: &str = "groq::openai/gpt-oss-20b";
+const MODEL_OLLAMA: &str = "gemma4:e2b"; // sh: `ollama pull gemma:2b`
+const MODEL_OLLAMA_CLOUD: &str = "ollama_cloud::gemma3:4b";
 const MODEL_XAI: &str = "grok-3-mini";
 const MODEL_DEEPSEEK: &str = "deepseek-chat";
 const MODEL_ZAI: &str = "glm-4-plus";
 const MODEL_ALIYUN: &str = "aliyun::qwen-plus"; // required namespace
 const MODEL_COHERE: &str = "command-r7b-12-2024";
+// or any publisher: "github_copilot::anthropic/claude-sonnet-4-6", "github_copilot::google/gemini-2.5-pro", "github_copilot::xai/grok-3-mini"
+const MODEL_GITHUB_COPILOT: &str = "github_copilot::openai/gpt-4.1-mini";
 
 // NOTE: These are the default environment keys for each AI Adapter Type.
 //       They can be customized; see `examples/c02-auth.rs`
@@ -26,15 +29,17 @@ const MODEL_AND_KEY_ENV_NAME_LIST: &[(&str, &str)] = &[
 	(MODEL_OPENAI, "OPENAI_API_KEY"),
 	(MODEL_ANTHROPIC, "ANTHROPIC_API_KEY"),
 	(MODEL_GEMINI, "GEMINI_API_KEY"),
+	(MODEL_OLLAMA, ""),
+	(MODEL_OLLAMA_CLOUD, "OLLAMA_API_KEY"),
 	(MODEL_FIREWORKS, "FIREWORKS_API_KEY"),
 	(MODEL_TOGETHER, "TOGETHER_API_KEY"),
 	(MODEL_GROQ, "GROQ_API_KEY"),
 	(MODEL_XAI, "XAI_API_KEY"),
 	(MODEL_DEEPSEEK, "DEEPSEEK_API_KEY"),
 	(MODEL_ALIYUN, "ALIYUN_API_KEY"),
-	(MODEL_OLLAMA, ""),
 	(MODEL_ZAI, "ZAI_API_KEY"),
 	(MODEL_COHERE, "COHERE_API_KEY"),
+	(MODEL_GITHUB_COPILOT, "GITHUB_TOKEN"),
 ];
 
 // NOTE: Model to AdapterKind (AI Provider) type mapping rule
@@ -44,6 +49,7 @@ const MODEL_AND_KEY_ENV_NAME_LIST: &[(&str, &str)] = &[
 //  - starts_with "gemini"   -> Gemini
 //  - model in Groq models   -> Groq
 //  - starts_with "glm"      -> ZAI
+//  - starts_with "ollama_cloud::" -> OllamaCloud
 //  - For anything else      -> Ollama
 //
 // This can be customized; see `examples/c03-mapper.rs`
