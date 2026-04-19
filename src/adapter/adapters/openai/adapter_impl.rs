@@ -1,15 +1,9 @@
 use crate::adapter::openai::OpenAIStreamer;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
-<<<<<<< HEAD
 use crate::chat::{
 	ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, ImageRequest, ImageResponse,
 	MessageContent, StopReason, ToolCall,
 };
-=======
-use crate::chat::{
-	ChatOptionsSet, ChatRequest, ChatResponse, ChatStream, ChatStreamResponse, MessageContent, StopReason, ToolCall,
-};
->>>>>>> upstream/main
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::{EventSourceStream, WebResponse};
 use crate::{Error, Result};

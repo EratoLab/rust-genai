@@ -4,17 +4,10 @@ use std::sync::Arc;
 use crate::adapter::adapters::support::get_api_key;
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
-<<<<<<< HEAD
 use crate::chat::{
 	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
 	ImageRequest, ImageResponse, ReasoningEffort, Usage,
 };
-=======
-use crate::chat::{
-	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
-	ReasoningEffort, Usage,
-};
->>>>>>> upstream/main
 use crate::resolver::{AuthData, Endpoint};
 use crate::{Error, Headers, Result};
 use crate::{ModelIden, ServiceTarget};

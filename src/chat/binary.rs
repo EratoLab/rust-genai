@@ -16,6 +16,16 @@ pub struct Binary {
 	pub name: Option<String>,
 }
 
+impl Default for Binary {
+	fn default() -> Self {
+		Self {
+			content_type: String::new(),
+			source: BinarySource::Base64("".into()),
+			name: None,
+		}
+	}
+}
+
 /// Constructors
 impl Binary {
 	/// Construct a new Binary value.

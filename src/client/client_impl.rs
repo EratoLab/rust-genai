@@ -1,5 +1,8 @@
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
-use crate::chat::{ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
+use crate::chat::{
+	ChatMessage, ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse,
+	ContentPart, ImageEditRequest, ImageRequest, ImageResponse, MessageContent,
+};
 use crate::client::ModelSpec;
 use crate::embed::{EmbedOptions, EmbedOptionsSet, EmbedRequest, EmbedResponse};
 use crate::resolver::AuthData;
@@ -271,5 +274,43 @@ impl Client {
 		let image_res = AdapterDispatcher::to_image_response(model, web_res, options_set)?;
 
 		Ok(image_res)
+	}
+
+	/// Creates edited images from a source image and prompt.
+	pub async fn exec_image_edit(
+		&self,
+		model: &str,
+		image_edit_req: ImageEditRequest,
+		options: Option<&ChatOptions>,
+	) -> Result<ImageResponse> {
+		let chat_req = ChatRequest::new(vec![ChatMessage::user(MessageContent::from_parts(vec![
+			ContentPart::Binary(image_edit_req.image),
+			ContentPart::Text(image_edit_req.prompt),
+		]))]);
+
+		let chat_res = self.exec_chat(model, chat_req, options).await?;
+
+		let images: Vec<ContentPart> = chat_res
+			.content
+			.into_parts()
+			.into_iter()
+			.filter_map(|part| match part {
+				ContentPart::Binary(binary) => Some(ContentPart::Binary(binary)),
+				_ => None,
+			})
+			.collect();
+
+		if images.is_empty() {
+			return Err(Error::Internal(
+				"No image data was returned by image edit request".to_string(),
+			));
+		}
+
+		Ok(ImageResponse {
+			images,
+			model_iden: chat_res.model_iden,
+			usage: Some(chat_res.usage),
+			captured_raw_body: chat_res.captured_raw_body,
+		})
 	}
 }

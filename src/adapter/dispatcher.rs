@@ -316,6 +316,18 @@ impl AdapterDispatcher {
 			AdapterKind::Zai => ZaiAdapter::to_image_request_data(target, image_req, options_set),
 			AdapterKind::BigModel => BigModelAdapter::to_image_request_data(target, image_req, options_set),
 			AdapterKind::Aliyun => AliyunAdapter::to_image_request_data(target, image_req, options_set),
+			AdapterKind::OllamaCloud => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::OllamaCloud,
+				feature: "image generation".to_string(),
+			}),
+			AdapterKind::Vertex => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::Vertex,
+				feature: "image generation".to_string(),
+			}),
+			AdapterKind::GithubCopilot => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::GithubCopilot,
+				feature: "image generation".to_string(),
+			}),
 		}
 	}
 
@@ -341,6 +353,18 @@ impl AdapterDispatcher {
 			AdapterKind::Zai => ZaiAdapter::to_image_response(model_iden, web_response, options_set),
 			AdapterKind::BigModel => BigModelAdapter::to_image_response(model_iden, web_response, options_set),
 			AdapterKind::Aliyun => AliyunAdapter::to_image_response(model_iden, web_response, options_set),
+			AdapterKind::OllamaCloud => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::OllamaCloud,
+				feature: "image generation".to_string(),
+			}),
+			AdapterKind::Vertex => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::Vertex,
+				feature: "image generation".to_string(),
+			}),
+			AdapterKind::GithubCopilot => Err(Error::AdapterNotSupported {
+				adapter_kind: AdapterKind::GithubCopilot,
+				feature: "image generation".to_string(),
+			}),
 		}
 	}
 }

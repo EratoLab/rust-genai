@@ -1,6 +1,7 @@
 //! This module contains all the types related to an Image Generation Request.
 
 use serde::{Deserialize, Serialize};
+use crate::chat::Binary;
 
 // region:    --- ImageRequest
 
@@ -25,6 +26,60 @@ pub struct ImageRequest {
 
 	/// The format in which the generated images are returned. Must be one of "url" or "b64_json".
 	pub response_format: Option<String>,
+}
+
+/// The image-edit request for editing an image from a source image and prompt.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImageEditRequest {
+	/// A text prompt describing the edit to apply to the source image.
+	pub prompt: String,
+
+	/// The source image to edit.
+	pub image: Binary,
+
+	/// The number of images to generate.
+	pub n: Option<i32>,
+
+	/// Optional target size.
+	pub size: Option<String>,
+
+	/// The format in which the edited images are returned. Must be one of "url" or "b64_json".
+	pub response_format: Option<String>,
+}
+
+/// Constructors
+impl ImageEditRequest {
+	/// Create a new image-edit request from a prompt and source image.
+	pub fn new(prompt: impl Into<String>, image: Binary) -> Self {
+		Self {
+			prompt: prompt.into(),
+			image,
+			n: None,
+			size: None,
+			response_format: None,
+		}
+	}
+}
+
+/// Chainable setters
+impl ImageEditRequest {
+	/// Set the number of images to generate.
+	pub fn with_n(mut self, n: i32) -> Self {
+		self.n = Some(n);
+		self
+	}
+
+	/// Set the output size.
+	pub fn with_size(mut self, size: impl Into<String>) -> Self {
+		self.size = Some(size.into());
+		self
+	}
+
+	/// Set the response format.
+	pub fn with_response_format(mut self, response_format: impl Into<String>) -> Self {
+		self.response_format = Some(response_format.into());
+		self
+	}
 }
 
 /// Constructors
@@ -81,4 +136,3 @@ impl ImageRequest {
 }
 
 // endregion: --- ImageRequest
-

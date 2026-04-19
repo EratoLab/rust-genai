@@ -106,12 +106,24 @@ impl Adapter for VertexAdapter {
 					format!("{base_url}{publisher_path}/models/{model_name}:streamGenerateContent")
 				}
 				ServiceType::Embed => format!("{base_url}{publisher_path}/models/{model_name}:predict"),
+				ServiceType::Image => {
+					return Err(Error::AdapterNotSupported {
+						adapter_kind: AdapterKind::Vertex,
+						feature: "image generation".to_string(),
+					});
+				}
 			},
 			VertexPublisher::Anthropic => match service_type {
 				ServiceType::Chat | ServiceType::ChatStream => {
 					format!("{base_url}{publisher_path}/models/{model_name}:rawPredict")
 				}
 				ServiceType::Embed => format!("{base_url}{publisher_path}/models/{model_name}:predict"),
+				ServiceType::Image => {
+					return Err(Error::AdapterNotSupported {
+						adapter_kind: AdapterKind::Vertex,
+						feature: "image generation".to_string(),
+					});
+				}
 			},
 		};
 
