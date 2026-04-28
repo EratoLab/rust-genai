@@ -5,7 +5,7 @@
 //!
 //! NOTE: This might be removed at some point as it may not be needed, and we could go directly to the GenAI stream.
 
-use crate::chat::{StopReason, Usage};
+use crate::chat::{ReasoningItem, StopReason, Usage};
 
 #[derive(Debug, Default)]
 pub struct InterStreamEnd {
@@ -20,6 +20,9 @@ pub struct InterStreamEnd {
 
 	// When `ChatOptions..capture_reasoning_content == true`
 	pub captured_reasoning_content: Option<String>,
+
+	// Provider-native reasoning items for stateless replay.
+	pub captured_reasoning_items: Option<Vec<ReasoningItem>>,
 
 	// When `ChatOptions..capture_tool_calls == true`
 	pub captured_tool_calls: Option<Vec<crate::chat::ToolCall>>,

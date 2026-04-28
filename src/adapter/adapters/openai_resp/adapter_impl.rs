@@ -434,6 +434,7 @@ impl OpenAIRespAdapter {
 								ContentPart::ToolResponse(_) => (),
 								ContentPart::ThoughtSignature(_) => (),
 								ContentPart::ReasoningContent(_) => (),
+								ContentPart::ReasoningItem(_) => (),
 								// Custom are ignored for this logic
 								ContentPart::Custom(_) => {}
 							}
@@ -478,8 +479,67 @@ impl OpenAIRespAdapter {
 							// TODO: Probably need towarn on this one (probably need to add binary here)
 							ContentPart::Binary(_) => {}
 							ContentPart::ToolResponse(_) => {}
-							ContentPart::ThoughtSignature(_) => {}
-							ContentPart::ReasoningContent(_) => {}
+							ContentPart::ThoughtSignature(encrypted_content) => {
+								if !item_message_content.is_empty() {
+									input_items.push(json!({
+										"type": "message",
+										"role": "assistant",
+										"content": item_message_content
+									}));
+									item_message_content = Vec::new();
+								}
+								input_items.push(json!({
+									"type": "reasoning",
+									"encrypted_content": encrypted_content
+								}));
+							}
+							ContentPart::ReasoningContent(reasoning_summary) => {
+								if !item_message_content.is_empty() {
+									input_items.push(json!({
+										"type": "message",
+										"role": "assistant",
+										"content": item_message_content
+									}));
+									item_message_content = Vec::new();
+								}
+								input_items.push(json!({
+									"type": "reasoning",
+									"summary": [{"type": "summary_text", "text": reasoning_summary}]
+								}));
+							}
+							ContentPart::ReasoningItem(reasoning_item) => {
+								if !item_message_content.is_empty() {
+									input_items.push(json!({
+										"type": "message",
+										"role": "assistant",
+										"content": item_message_content
+									}));
+									item_message_content = Vec::new();
+								}
+								let mut item = Map::new();
+								item.insert("type".into(), "reasoning".into());
+								if let Some(id) = reasoning_item.id {
+									item.insert("id".into(), id.into());
+								}
+								if !reasoning_item.summary.is_empty() {
+									item.insert("summary".into(), json!(reasoning_item.summary));
+								}
+								if !reasoning_item.content.is_empty() {
+									let content = reasoning_item
+										.content
+										.into_iter()
+										.map(|text| json!({"type": "reasoning_text", "text": text}))
+										.collect::<Vec<_>>();
+									item.insert("content".into(), content.into());
+								}
+								if let Some(encrypted_content) = reasoning_item.encrypted_content {
+									item.insert("encrypted_content".into(), encrypted_content.into());
+								}
+								if let Some(status) = reasoning_item.status {
+									item.insert("status".into(), status.into());
+								}
+								input_items.push(Value::Object(item));
+							}
 							// Custom are ignored for this logic
 							ContentPart::Custom(_) => {}
 						}

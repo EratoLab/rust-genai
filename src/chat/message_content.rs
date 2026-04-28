@@ -1,5 +1,5 @@
 /// Note: MessageContent is used for ChatRequest and ChatResponse.
-use crate::chat::{Binary, ContentPart, CustomPart, ToolCall, ToolResponse};
+use crate::chat::{Binary, ContentPart, CustomPart, ReasoningItem, ToolCall, ToolResponse};
 use serde::{Deserialize, Serialize};
 
 /// Message content container used in ChatRequest and ChatResponse.
@@ -265,6 +265,16 @@ impl MessageContent {
 		self.parts.into_iter().filter_map(|p| p.into_reasoning_content()).collect()
 	}
 
+	/// Return references to all provider-native reasoning items.
+	pub fn reasoning_items(&self) -> Vec<&ReasoningItem> {
+		self.parts.iter().filter_map(|p| p.as_reasoning_item()).collect()
+	}
+
+	/// Consume and return all provider-native reasoning items.
+	pub fn into_reasoning_items(self) -> Vec<ReasoningItem> {
+		self.parts.into_iter().filter_map(|p| p.into_reasoning_item()).collect()
+	}
+
 	/// Join all reasoning content parts with a newline separator.
 	/// Returns None if there are no reasoning content parts.
 	pub fn joined_reasoning_content(&self) -> Option<String> {
@@ -403,6 +413,11 @@ impl MessageContent {
 	/// True if at least one part is a ThoughtSignature.
 	pub fn contains_thought_signature(&self) -> bool {
 		self.parts.iter().any(|p| p.is_thought_signature())
+	}
+
+	/// True if at least one part is a provider-native reasoning item.
+	pub fn contains_reasoning_item(&self) -> bool {
+		self.parts.iter().any(|p| p.is_reasoning_item())
 	}
 
 	/// True if at least one part is ReasoningContent.

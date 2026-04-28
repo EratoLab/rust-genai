@@ -6,6 +6,76 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReasoningSummaryText {
+	pub text: String,
+
+	#[serde(default = "ReasoningSummaryText::summary_text_type")]
+	pub r#type: String,
+}
+
+impl ReasoningSummaryText {
+	fn summary_text_type() -> String {
+		"summary_text".to_string()
+	}
+
+	pub fn new(text: impl Into<String>) -> Self {
+		Self {
+			text: text.into(),
+			r#type: Self::summary_text_type(),
+		}
+	}
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReasoningItem {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub id: Option<String>,
+
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub summary: Vec<ReasoningSummaryText>,
+
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub content: Vec<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub encrypted_content: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub status: Option<String>,
+}
+
+impl ReasoningItem {
+	pub fn new() -> Self {
+		Self::default()
+	}
+
+	pub fn from_encrypted_content(encrypted_content: impl Into<String>) -> Self {
+		Self {
+			encrypted_content: Some(encrypted_content.into()),
+			..Default::default()
+		}
+	}
+
+	pub fn summary_text(&self) -> Option<String> {
+		let texts = self
+			.summary
+			.iter()
+			.map(|summary| summary.text.as_str())
+			.filter(|text| !text.is_empty())
+			.collect::<Vec<_>>();
+		if texts.is_empty() { None } else { Some(texts.join("\n")) }
+	}
+
+	pub fn size(&self) -> usize {
+		self.id.as_ref().map(String::len).unwrap_or_default()
+			+ self.summary.iter().map(|summary| summary.text.len()).sum::<usize>()
+			+ self.content.iter().map(String::len).sum::<usize>()
+			+ self.encrypted_content.as_ref().map(String::len).unwrap_or_default()
+			+ self.status.as_ref().map(String::len).unwrap_or_default()
+	}
+}
+
 /// A single content segment in a chat message.
 ///
 /// Variants cover plain text, binary payloads (e.g., images/PDF), and tool calls/responses.
@@ -32,6 +102,11 @@ pub enum ContentPart {
 	/// (e.g., sibling `reasoning_content` field for OpenAI-compatible providers).
 	#[from(ignore)]
 	ReasoningContent(String),
+
+	/// Provider-native reasoning item that preserves fields which must remain correlated
+	/// for stateless replay, such as OpenAI Responses `summary` and `encrypted_content`.
+	#[from]
+	ReasoningItem(ReasoningItem),
 
 	#[from]
 	Custom(CustomPart),
@@ -195,6 +270,24 @@ impl ContentPart {
 		}
 	}
 
+	/// Borrow the reasoning item if present.
+	pub fn as_reasoning_item(&self) -> Option<&ReasoningItem> {
+		if let ContentPart::ReasoningItem(reasoning_item) = self {
+			Some(reasoning_item)
+		} else {
+			None
+		}
+	}
+
+	/// Extract the reasoning item, consuming the part.
+	pub fn into_reasoning_item(self) -> Option<ReasoningItem> {
+		if let ContentPart::ReasoningItem(reasoning_item) = self {
+			Some(reasoning_item)
+		} else {
+			None
+		}
+	}
+
 	/// Borrow the custom part if present.
 	pub fn as_custom(&self) -> Option<&CustomPart> {
 		if let ContentPart::Custom(custom_part) = self {
@@ -230,6 +323,7 @@ impl ContentPart {
 			ContentPart::ToolResponse(tool_response) => tool_response.size(),
 			ContentPart::ThoughtSignature(thought) => thought.len(),
 			ContentPart::ReasoningContent(reasoning) => reasoning.len(),
+			ContentPart::ReasoningItem(reasoning_item) => reasoning_item.size(),
 			ContentPart::Custom(_value) => 0, // TODO: will need to compute this size
 		}
 	}
@@ -291,6 +385,11 @@ impl ContentPart {
 	/// Returns true if this part is reasoning content.
 	pub fn is_reasoning_content(&self) -> bool {
 		matches!(self, ContentPart::ReasoningContent(_))
+	}
+
+	/// Returns true if this part is a provider-native reasoning item.
+	pub fn is_reasoning_item(&self) -> bool {
+		matches!(self, ContentPart::ReasoningItem(_))
 	}
 
 	/// Returns true if this part is custom provider-specific content.

@@ -1,7 +1,7 @@
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{
-	ChatMessage, ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse,
-	ContentPart, ImageEditRequest, ImageRequest, ImageResponse, MessageContent,
+	ChatMessage, ChatOptions, ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ContentPart,
+	ImageEditRequest, ImageRequest, ImageResponse, MessageContent,
 };
 use crate::client::ModelSpec;
 use crate::embed::{EmbedOptions, EmbedOptionsSet, EmbedRequest, EmbedResponse};
@@ -262,14 +262,14 @@ impl Client {
 		let WebRequestData { headers, payload, url } =
 			AdapterDispatcher::to_image_request_data(target, image_req, options_set.clone())?;
 
-		let web_res =
-			self.web_client()
-				.do_post(&url, &headers, &payload)
-				.await
-				.map_err(|webc_error| Error::WebModelCall {
-					model_iden: model.clone(),
-					webc_error,
-				})?;
+		let web_res = self
+			.web_client()
+			.do_post(&url, &headers, &payload)
+			.await
+			.map_err(|webc_error| Error::WebModelCall {
+				model_iden: model.clone(),
+				webc_error,
+			})?;
 
 		let image_res = AdapterDispatcher::to_image_response(model, web_res, options_set)?;
 

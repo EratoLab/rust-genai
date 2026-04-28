@@ -1,7 +1,7 @@
 use crate::adapter::adapters::support::{StreamerCapturedData, StreamerOptions};
 use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
 use crate::adapter::openai_resp::resp_types::RespResponse;
-use crate::chat::{ChatOptionsSet, StopReason, ToolCall};
+use crate::chat::{ChatOptionsSet, ReasoningItem, ReasoningSummaryText, StopReason, ToolCall};
 use crate::webc::{Event, EventSourceStream};
 use crate::{Error, ModelIden, Result};
 use serde::Deserialize;
@@ -10,6 +10,65 @@ use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use value_ext::JsonValueExt;
+
+fn reasoning_item_from_value(item: &Value) -> Option<ReasoningItem> {
+	if item.x_get_str("type").ok() != Some("reasoning") {
+		return None;
+	}
+
+	let id = item.x_get_str("id").ok().map(ToString::to_string);
+	let encrypted_content = item.x_get_str("encrypted_content").ok().map(ToString::to_string);
+	let status = item.x_get_str("status").ok().map(ToString::to_string);
+
+	let summary = item
+		.get("summary")
+		.and_then(Value::as_array)
+		.map(|items| {
+			items
+				.iter()
+				.filter_map(|summary_item| {
+					if summary_item.x_get_str("type").ok() == Some("summary_text") {
+						summary_item
+							.x_get_str("text")
+							.ok()
+							.map(|text| ReasoningSummaryText::new(text.to_string()))
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>()
+		})
+		.unwrap_or_default();
+
+	let content = item
+		.get("content")
+		.and_then(Value::as_array)
+		.map(|items| {
+			items
+				.iter()
+				.filter_map(|content_item| {
+					if content_item.x_get_str("type").ok() == Some("reasoning_text") {
+						content_item.x_get_str("text").ok().map(ToString::to_string)
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>()
+		})
+		.unwrap_or_default();
+
+	if id.is_none() && encrypted_content.is_none() && status.is_none() && summary.is_empty() && content.is_empty() {
+		return None;
+	}
+
+	Some(ReasoningItem {
+		id,
+		summary,
+		content,
+		encrypted_content,
+		status,
+	})
+}
 
 pub struct OpenAIRespStreamer {
 	inner: EventSourceStream,
@@ -201,16 +260,16 @@ impl futures::Stream for OpenAIRespStreamer {
 								self.captured_data.tool_calls = Some(tool_calls.clone());
 							}
 
-							// Extract encrypted reasoning content from output items
-							// (OpenAI equivalent of Gemini thought signatures).
+							// Extract provider-native reasoning items for stateless Responses API replay.
 							if self.options.capture_reasoning_content {
-								let mut thought_sigs: Vec<String> = Vec::new();
-								for item in &response.output {
-									if item.x_get_str("type").ok() == Some("reasoning")
-										&& let Ok(encrypted) = item.x_get_str("encrypted_content")
-									{
-										thought_sigs.push(encrypted.to_string());
-									}
+								let reasoning_items =
+									response.output.iter().filter_map(reasoning_item_from_value).collect::<Vec<_>>();
+								let thought_sigs = reasoning_items
+									.iter()
+									.filter_map(|item| item.encrypted_content.clone())
+									.collect::<Vec<_>>();
+								if !reasoning_items.is_empty() {
+									self.captured_data.reasoning_items = Some(reasoning_items);
 								}
 								if !thought_sigs.is_empty() {
 									self.captured_data.thought_signatures = Some(thought_sigs);
@@ -222,6 +281,7 @@ impl futures::Stream for OpenAIRespStreamer {
 								captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 								captured_text_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
+								captured_reasoning_items: self.captured_data.reasoning_items.take(),
 								captured_tool_calls: self.captured_data.tool_calls.take(),
 								captured_thought_signatures: self.captured_data.thought_signatures.take(),
 								captured_response_id: Some(response.id),
@@ -255,6 +315,7 @@ impl futures::Stream for OpenAIRespStreamer {
 								captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 								captured_text_content: self.captured_data.content.take(),
 								captured_reasoning_content: self.captured_data.reasoning_content.take(),
+								captured_reasoning_items: self.captured_data.reasoning_items.take(),
 								captured_tool_calls: self.captured_data.tool_calls.take(),
 								captured_thought_signatures: None,
 								captured_response_id: Some(resp_id),
@@ -284,6 +345,7 @@ impl futures::Stream for OpenAIRespStreamer {
 							captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 							captured_text_content: self.captured_data.content.take(),
 							captured_reasoning_content: self.captured_data.reasoning_content.take(),
+							captured_reasoning_items: None,
 							captured_tool_calls: self.captured_data.tool_calls.take(),
 							captured_thought_signatures: None,
 							captured_response_id: None,

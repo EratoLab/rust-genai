@@ -1,21 +1,21 @@
 //! This is support implementation of the OpenAI Adapter which can also be called by other OpenAI Adapter Variants
 
-use std::sync::Arc;
 use crate::adapter::adapters::support::get_api_key;
 use crate::adapter::openai::OpenAIAdapter;
 use crate::adapter::{AdapterDispatcher, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{
-	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart,
-	ImageRequest, ImageResponse, ReasoningEffort, Usage,
+	BinarySource, CacheControl, ChatOptionsSet, ChatRequest, ChatResponseFormat, ChatRole, ContentPart, ImageRequest,
+	ImageResponse, ReasoningEffort, Usage,
 };
 use crate::resolver::{AuthData, Endpoint};
+use crate::webc::WebResponse;
 use crate::{Error, Headers, Result};
 use crate::{ModelIden, ServiceTarget};
 use serde_json::{Value, json};
+use std::sync::Arc;
 use tracing::error;
 use tracing::warn;
 use value_ext::JsonValueExt;
-use crate::webc::WebResponse;
 
 fn insert_openai_reasoning_effort(payload: &mut Value, effort: &ReasoningEffort) -> Result<()> {
 	let keyword = match effort {
@@ -326,6 +326,7 @@ impl OpenAIAdapter {
 								ContentPart::ToolResponse(_) => (),
 								ContentPart::ThoughtSignature(_) => (),
 								ContentPart::ReasoningContent(_) => (),
+								ContentPart::ReasoningItem(_) => (),
 								// Custom are ignored for this logic
 								ContentPart::Custom(_) => {}
 							}
@@ -355,6 +356,7 @@ impl OpenAIAdapter {
 							}
 							// Extract reasoning content parts to hoist into sibling field
 							ContentPart::ReasoningContent(reasoning) => reasoning_parts.push(reasoning),
+							ContentPart::ReasoningItem(_) => (),
 
 							// TODO: Probably need towarn on this one (probably need to add binary here)
 							ContentPart::Binary(_) => (),
@@ -487,9 +489,7 @@ impl OpenAIAdapter {
 		let url = AdapterDispatcher::get_service_url(&model, ServiceType::Image, endpoint)?;
 
 		// -- headers
-		let headers = Headers::from(vec![
-			("Authorization".to_string(), format!("Bearer {api_key}")),
-		]);
+		let headers = Headers::from(vec![("Authorization".to_string(), format!("Bearer {api_key}"))]);
 
 		// -- Build the payload
 		let mut payload = json!({
@@ -538,7 +538,11 @@ impl OpenAIAdapter {
 				}
 				// Check for base64 format
 				else if let Ok(Some(b64_json)) = item.x_take::<Option<String>>("/b64_json") {
-					images.push(ContentPart::from_binary_base64("image/png", Arc::from(b64_json.as_str()), None));
+					images.push(ContentPart::from_binary_base64(
+						"image/png",
+						Arc::from(b64_json.as_str()),
+						None,
+					));
 				}
 			}
 		}

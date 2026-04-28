@@ -1,7 +1,7 @@
 //! Tests for OpenAI image generation
 
-use genai::chat::{ContentPart, ImageRequest, ImageSource};
 use genai::Client;
+use genai::chat::{ContentPart, ImageRequest, ImageSource};
 
 const MODEL: &str = "dall-e-3";
 
@@ -49,11 +49,7 @@ async fn test_openai_image_generation_multiple() -> Result<(), Box<dyn std::erro
 	let image_res = client.exec_image_generation(MODEL, image_req, None).await?;
 
 	// Verify we got the requested number of images
-	assert_eq!(
-		image_res.images.len(),
-		2,
-		"Should generate exactly 2 images"
-	);
+	assert_eq!(image_res.images.len(), 2, "Should generate exactly 2 images");
 
 	Ok(())
 }
@@ -96,7 +92,9 @@ async fn test_unsupported_adapter_image_generation() -> Result<(), Box<dyn std::
 	let image_req = ImageRequest::from_prompt("A test image");
 
 	// Try with Anthropic model which doesn't support image generation
-	let result = client.exec_image_generation("claude-3-5-sonnet-20241022", image_req, None).await;
+	let result = client
+		.exec_image_generation("claude-3-5-sonnet-20241022", image_req, None)
+		.await;
 
 	assert!(result.is_err(), "Should return error for unsupported adapter");
 
@@ -110,4 +108,3 @@ async fn test_unsupported_adapter_image_generation() -> Result<(), Box<dyn std::
 
 	Ok(())
 }
-

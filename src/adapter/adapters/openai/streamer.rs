@@ -173,6 +173,7 @@ impl futures::Stream for OpenAIStreamer {
 							captured_stop_reason: self.captured_data.stop_reason.take().map(StopReason::from),
 							captured_text_content: self.captured_data.content.take(),
 							captured_reasoning_content: self.captured_data.reasoning_content.take(),
+							captured_reasoning_items: None,
 							captured_tool_calls,
 							captured_thought_signatures: None,
 							captured_response_id: None,

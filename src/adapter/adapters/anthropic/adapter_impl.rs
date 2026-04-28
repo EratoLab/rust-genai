@@ -640,6 +640,7 @@ impl AnthropicAdapter {
 								}
 								ContentPart::ThoughtSignature(_) => {}
 								ContentPart::ReasoningContent(_) => {}
+								ContentPart::ReasoningItem(_) => {}
 								// Custom are ignored for this logic
 								ContentPart::Custom(_) => {}
 							}
@@ -684,6 +685,7 @@ impl AnthropicAdapter {
 							ContentPart::ToolResponse(_) => {}
 							ContentPart::ThoughtSignature(_) => {}
 							ContentPart::ReasoningContent(_) => {}
+							ContentPart::ReasoningItem(_) => {}
 							// Custom are ignored for this logic
 							ContentPart::Custom(_) => {}
 						}

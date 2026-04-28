@@ -1,5 +1,5 @@
 use crate::adapter::inter_stream::{InterStreamEnd, InterStreamEvent};
-use crate::chat::{ChatMessage, ContentPart, MessageContent, StopReason, ToolCall, Usage};
+use crate::chat::{ChatMessage, ContentPart, MessageContent, ReasoningItem, StopReason, ToolCall, Usage};
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -119,6 +119,9 @@ pub struct StreamEnd {
 	/// Captured reasoning content if `ChatOptions.capture_reasoning` is enabled.
 	pub captured_reasoning_content: Option<String>,
 
+	/// Provider-native reasoning items, including OpenAI Responses encrypted content.
+	pub captured_reasoning_items: Option<Vec<ReasoningItem>>,
+
 	/// Response ID for stateful sessions (OpenAI Responses API).
 	pub captured_response_id: Option<String>,
 }
@@ -132,6 +135,17 @@ impl From<InterStreamEnd> for StreamEnd {
 		// Ordering policy: ThoughtSignature -> Text -> ToolCall
 		// This matches provider expectations (e.g., Gemini 3 requires thought first).
 		let mut captured_content: Option<MessageContent> = None;
+		if let Some(captured_reasoning_items) = inter_end.captured_reasoning_items.clone() {
+			let reasoning_content = captured_reasoning_items
+				.into_iter()
+				.map(ContentPart::ReasoningItem)
+				.collect::<Vec<_>>();
+			if let Some(existing_content) = &mut captured_content {
+				existing_content.extend(reasoning_content);
+			} else {
+				captured_content = Some(MessageContent::from_parts(reasoning_content));
+			}
+		}
 		if let Some(captured_thoughts) = inter_end.captured_thought_signatures {
 			let thoughts_content = captured_thoughts
 				.into_iter()
@@ -178,6 +192,7 @@ impl From<InterStreamEnd> for StreamEnd {
 			captured_stop_reason: inter_end.captured_stop_reason,
 			captured_content,
 			captured_reasoning_content: inter_end.captured_reasoning_content,
+			captured_reasoning_items: inter_end.captured_reasoning_items,
 			captured_response_id: inter_end.captured_response_id,
 		}
 	}
@@ -221,6 +236,24 @@ impl StreamEnd {
 	pub fn captured_into_tool_calls(self) -> Option<Vec<ToolCall>> {
 		let captured_content = self.captured_content?;
 		Some(captured_content.into_tool_calls())
+	}
+
+	/// Returns all captured reasoning items, if any.
+	pub fn captured_reasoning_items(&self) -> Option<Vec<&ReasoningItem>> {
+		let captured_content = self.captured_content.as_ref()?;
+		Some(captured_content.parts().iter().filter_map(|p| p.as_reasoning_item()).collect())
+	}
+
+	/// Consumes `self` and returns all captured reasoning items, if any.
+	pub fn captured_into_reasoning_items(self) -> Option<Vec<ReasoningItem>> {
+		let captured_content = self.captured_content?;
+		Some(
+			captured_content
+				.into_parts()
+				.into_iter()
+				.filter_map(|p| p.into_reasoning_item())
+				.collect(),
+		)
 	}
 
 	/// Returns all captured thought signatures, if any.

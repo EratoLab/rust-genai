@@ -27,20 +27,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 	for (idx, image) in image_res.images.iter().enumerate() {
 		match image {
-			ContentPart::Image { content_type, source } => {
-				match source {
-					ImageSource::Url(url) => {
-						println!("Image {}: {} (URL: {})", idx + 1, content_type, url);
-					}
-					ImageSource::Base64(_) => {
-						println!("Image {}: {} (Base64 encoded)", idx + 1, content_type);
-					}
+			ContentPart::Image { content_type, source } => match source {
+				ImageSource::Url(url) => {
+					println!("Image {}: {} (URL: {})", idx + 1, content_type, url);
 				}
-			}
+				ImageSource::Base64(_) => {
+					println!("Image {}: {} (Base64 encoded)", idx + 1, content_type);
+				}
+			},
 			_ => println!("Unexpected content type"),
 		}
 	}
 
 	Ok(())
 }
-

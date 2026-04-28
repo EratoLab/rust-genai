@@ -1,7 +1,7 @@
 //! This module contains all the types related to an Image Generation Request.
 
-use serde::{Deserialize, Serialize};
 use crate::chat::Binary;
+use serde::{Deserialize, Serialize};
 
 // region:    --- ImageRequest
 
