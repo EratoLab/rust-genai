@@ -1,11 +1,10 @@
-use crate::ModelIden;
 use crate::adapter::dispatcher_macros::dispatch_adapter;
 use crate::adapter::{Adapter, AdapterKind, ServiceType, WebRequestData};
 use crate::chat::{ChatOptionsSet, ChatRequest, ChatResponse, ChatStreamResponse, ImageRequest, ImageResponse};
 use crate::embed::{EmbedOptionsSet, EmbedRequest, EmbedResponse};
 use crate::resolver::{AuthData, Endpoint};
 use crate::webc::WebResponse;
-use crate::{Result, ServiceTarget};
+use crate::{ModelIden, Result, ServiceTarget};
 use reqwest::RequestBuilder;
 
 /// A construct that allows dispatching calls to the Adapters.
@@ -92,37 +91,8 @@ impl AdapterDispatcher {
 		image_req: ImageRequest,
 		options_set: ChatOptionsSet<'_, '_>,
 	) -> Result<WebRequestData> {
-		let adapter_kind = &target.model.adapter_kind;
-		match adapter_kind {
-			AdapterKind::OpenAI => OpenAIAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::OpenAIResp => OpenAIRespAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Anthropic => AnthropicAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Cohere => CohereAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Ollama => OllamaAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Gemini => GeminiAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Groq => GroqAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Fireworks => FireworksAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Together => TogetherAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Mimo => MimoAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Nebius => NebiusAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Xai => XaiAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::DeepSeek => DeepSeekAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Zai => ZaiAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::BigModel => BigModelAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::Aliyun => AliyunAdapter::to_image_request_data(target, image_req, options_set),
-			AdapterKind::OllamaCloud => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::OllamaCloud,
-				feature: "image generation".to_string(),
-			}),
-			AdapterKind::Vertex => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::Vertex,
-				feature: "image generation".to_string(),
-			}),
-			AdapterKind::GithubCopilot => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::GithubCopilot,
-				feature: "image generation".to_string(),
-			}),
-		}
+		let adapter_kind = target.model.adapter_kind;
+		dispatch_adapter!(adapter_kind, A::to_image_request_data(target, image_req, options_set))
 	}
 
 	pub fn to_image_response(
@@ -130,35 +100,10 @@ impl AdapterDispatcher {
 		web_response: WebResponse,
 		options_set: ChatOptionsSet<'_, '_>,
 	) -> Result<ImageResponse> {
-		match model_iden.adapter_kind {
-			AdapterKind::OpenAI => OpenAIAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::OpenAIResp => OpenAIRespAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Anthropic => AnthropicAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Cohere => CohereAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Ollama => OllamaAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Gemini => GeminiAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Groq => GroqAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Fireworks => FireworksAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Together => TogetherAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Mimo => MimoAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Nebius => NebiusAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Xai => XaiAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::DeepSeek => DeepSeekAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Zai => ZaiAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::BigModel => BigModelAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::Aliyun => AliyunAdapter::to_image_response(model_iden, web_response, options_set),
-			AdapterKind::OllamaCloud => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::OllamaCloud,
-				feature: "image generation".to_string(),
-			}),
-			AdapterKind::Vertex => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::Vertex,
-				feature: "image generation".to_string(),
-			}),
-			AdapterKind::GithubCopilot => Err(Error::AdapterNotSupported {
-				adapter_kind: AdapterKind::GithubCopilot,
-				feature: "image generation".to_string(),
-			}),
-		}
+		let adapter_kind = model_iden.adapter_kind;
+		dispatch_adapter!(
+			adapter_kind,
+			A::to_image_response(model_iden, web_response, options_set)
+		)
 	}
 }
