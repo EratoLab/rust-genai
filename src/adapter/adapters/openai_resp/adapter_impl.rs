@@ -628,12 +628,15 @@ impl OpenAIRespAdapter {
 				tool_value
 			}
 			name => {
-				let strict = strict.unwrap_or(false);
+				let strict = strict;
 				let mut parameters = schema;
 
 				// When strict mode is enabled, OpenAI requires `additionalProperties: false`
 				// on every object node in the schema.
-				if strict && let Some(ref mut schema_val) = parameters {
+				// Bifrost quickfix: only emit `strict` when it is explicitly configured.
+				if strict == Some(true)
+					&& let Some(ref mut schema_val) = parameters
+				{
 					schema_val.x_walk(|parent_map, prop_name| {
 						if prop_name == "type" {
 							let typ = parent_map.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -645,13 +648,20 @@ impl OpenAIRespAdapter {
 					});
 				}
 
-				json!({
+				let mut tool_value = json!({
 					"type": "function",
 					"name": name,
 					"description": description,
 					"parameters": parameters,
-					"strict": strict,
-				})
+				});
+
+				if let Some(strict) = strict {
+					if let Some(function) = tool_value.as_object_mut() {
+						function.insert("strict".to_string(), strict.into());
+					}
+				}
+
+				tool_value
 			}
 		};
 

@@ -37,8 +37,10 @@ pub struct Tool {
 	/// ```
 	pub schema: Option<Value>,
 
-	/// When `true`, the provider enforces strict schema validation on tool-call arguments.
+	/// `Some(true)` enables strict schema validation on tool-call arguments.
 	/// For OpenAI this sets `"strict": true` and auto-injects `"additionalProperties": false`
+	/// on every `"type": "object"` node in the schema. The default is `Some(false)`.
+	/// Use `Some(false)` explicitly to emit `\"strict\": false` and `None` to omit the field.
 	/// on every `"type": "object"` node in the schema.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub strict: Option<bool>,
@@ -88,7 +90,7 @@ impl Tool {
 			name: name.into(),
 			description: None,
 			schema: None,
-			strict: None,
+			strict: Some(false),
 			config: None,
 		}
 	}
@@ -115,9 +117,10 @@ impl Tool {
 	}
 
 	/// Enable strict schema validation for tool-call arguments.
-	/// When `true`, OpenAI enforces exact schema conformance.
-	pub fn with_strict(mut self, strict: bool) -> Self {
-		self.strict = Some(strict);
+	/// When provided, OpenAI enforces exact schema conformance according to the supplied value.
+	/// If set to `None`, the field is omitted from providers that support omitting it.
+	pub fn with_strict(mut self, strict: impl Into<Option<bool>>) -> Self {
+		self.strict = strict.into();
 		self
 	}
 
