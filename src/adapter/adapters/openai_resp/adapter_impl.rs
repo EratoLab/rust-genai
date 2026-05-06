@@ -357,6 +357,14 @@ impl OpenAIRespAdapter {
 		Ok(full_url.to_string())
 	}
 
+	fn message_input_item(role: &str, content: impl Into<Value>) -> Value {
+		json!({
+			"type": "message",
+			"role": role,
+			"content": content.into()
+		})
+	}
+
 	/// Takes the genai ChatMessages and builds the OpenAIChatRequestParts
 	/// - `genai::ChatRequest.system`, if present, is added as the first message with role 'system'.
 	/// - All messages get added with the corresponding roles (tools are not supported for now)
@@ -366,7 +374,7 @@ impl OpenAIRespAdapter {
 
 		// -- Process the system
 		if let Some(system_msg) = chat_req.system {
-			input_items.push(json!({"role": "system", "content": system_msg}));
+			input_items.push(Self::message_input_item("system", system_msg));
 		}
 
 		let mut unamed_file_count = 0;
@@ -378,7 +386,7 @@ impl OpenAIRespAdapter {
 				// For now, system and tool messages go to the system
 				ChatRole::System => {
 					if let Some(content) = msg.content.into_joined_texts() {
-						input_items.push(json!({"role": "system", "content": content}))
+						input_items.push(Self::message_input_item("system", content))
 					}
 					// TODO: Probably need to warn if it is a ToolCalls type of content
 				}
@@ -389,7 +397,7 @@ impl OpenAIRespAdapter {
 					if msg.content.is_text_only() {
 						// NOTE: for now, if no content, just return empty string (respect current logic)
 						let content = json!(msg.content.joined_texts().unwrap_or_else(String::new));
-						input_items.push(json! ({"role": "user", "content": content}));
+						input_items.push(Self::message_input_item("user", content));
 					} else {
 						let mut values: Vec<Value> = Vec::new();
 
@@ -454,7 +462,7 @@ impl OpenAIRespAdapter {
 								ContentPart::Custom(_) => {}
 							}
 						}
-						input_items.push(json! ({"role": "user", "content": values}));
+						input_items.push(Self::message_input_item("user", values));
 					}
 				}
 
@@ -475,11 +483,7 @@ impl OpenAIRespAdapter {
 							ContentPart::ToolCall(tool_call) => {
 								// Make sure to create the assistant message
 								if !item_message_content.is_empty() {
-									input_items.push(json!({
-										"type": "message",
-										"role": "assistant",
-										"content": item_message_content
-									}));
+									input_items.push(Self::message_input_item("assistant", item_message_content));
 									item_message_content = Vec::new();
 								}
 								// NOTE: Flatten for OpenAI Responsess API
@@ -496,11 +500,7 @@ impl OpenAIRespAdapter {
 							ContentPart::ToolResponse(_) => {}
 							ContentPart::ThoughtSignature(encrypted_content) => {
 								if !item_message_content.is_empty() {
-									input_items.push(json!({
-										"type": "message",
-										"role": "assistant",
-										"content": item_message_content
-									}));
+									input_items.push(Self::message_input_item("assistant", item_message_content));
 									item_message_content = Vec::new();
 								}
 								input_items.push(json!({
@@ -510,11 +510,7 @@ impl OpenAIRespAdapter {
 							}
 							ContentPart::ReasoningContent(reasoning_summary) => {
 								if !item_message_content.is_empty() {
-									input_items.push(json!({
-										"type": "message",
-										"role": "assistant",
-										"content": item_message_content
-									}));
+									input_items.push(Self::message_input_item("assistant", item_message_content));
 									item_message_content = Vec::new();
 								}
 								input_items.push(json!({
@@ -524,11 +520,7 @@ impl OpenAIRespAdapter {
 							}
 							ContentPart::ReasoningItem(reasoning_item) => {
 								if !item_message_content.is_empty() {
-									input_items.push(json!({
-										"type": "message",
-										"role": "assistant",
-										"content": item_message_content
-									}));
+									input_items.push(Self::message_input_item("assistant", item_message_content));
 									item_message_content = Vec::new();
 								}
 								let mut item = Map::new();
@@ -562,11 +554,7 @@ impl OpenAIRespAdapter {
 
 					// Make sure we handle the rest of the assistant message
 					if !item_message_content.is_empty() {
-						input_items.push(json!({
-							"type": "message",
-							"role": "assistant",
-							"content": item_message_content
-						}));
+						input_items.push(Self::message_input_item("assistant", item_message_content));
 					}
 				}
 
@@ -684,6 +672,28 @@ mod tests {
 	use super::*;
 	use crate::adapter::AdapterKind;
 	use crate::chat::ChatMessage;
+
+	#[test]
+	fn test_message_input_items_include_message_type() {
+		let model_iden = ModelIden::new(AdapterKind::OpenAIResp, "gpt-5-codex");
+
+		let chat_req = ChatRequest::default()
+			.with_system("You are a helpful assistant.")
+			.append_message(ChatMessage::system("Prefer concise answers."))
+			.append_message(ChatMessage::user("What's the weather?"))
+			.append_message(ChatMessage::assistant("The weather is sunny."));
+
+		let parts =
+			OpenAIRespAdapter::into_openai_request_parts(&model_iden, chat_req).expect("Should serialize successfully");
+
+		for item in parts.input_items.iter().filter(|item| item.get("role").is_some()) {
+			assert_eq!(
+				item.get("type").and_then(|type_value| type_value.as_str()),
+				Some("message"),
+				"Message input item should include type=message: {item:?}"
+			);
+		}
+	}
 
 	/// Test that assistant message text content uses "output_text" type (not "input_text").
 	///
