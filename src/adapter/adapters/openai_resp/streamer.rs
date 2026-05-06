@@ -290,13 +290,22 @@ impl futures::Stream for OpenAIRespStreamer {
 							}
 
 							// Extract provider-native reasoning items for stateless Responses API replay.
-							if self.options.capture_reasoning_content {
-								let reasoning_items =
+							if self.options.capture_reasoning_content
+								|| self.options.capture_encrypted_reasoning_content
+							{
+								let mut reasoning_items =
 									response.output.iter().filter_map(reasoning_item_from_value).collect::<Vec<_>>();
-								let thought_sigs = reasoning_items
-									.iter()
-									.filter_map(|item| item.encrypted_content.clone())
-									.collect::<Vec<_>>();
+								let thought_sigs = if self.options.capture_encrypted_reasoning_content {
+									reasoning_items
+										.iter()
+										.filter_map(|item| item.encrypted_content.clone())
+										.collect::<Vec<_>>()
+								} else {
+									for item in &mut reasoning_items {
+										item.encrypted_content = None;
+									}
+									Vec::new()
+								};
 								if !reasoning_items.is_empty() {
 									self.captured_data.reasoning_items = Some(reasoning_items);
 								}

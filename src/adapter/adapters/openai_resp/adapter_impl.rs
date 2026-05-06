@@ -53,6 +53,7 @@ impl Adapter for OpenAIRespAdapter {
 	/// - `.instructions` For now we do not use the top ".instructions" (genai::ChatRequest.system),
 	///   but just add this top system as a regular system message.
 	/// - `.summary` reasoning summary is opt-in via `ChatOptions.capture_reasoning_content(true)` → `"detailed"`
+	/// - encrypted reasoning content is opt-in via `ChatOptions.capture_encrypted_reasoning_content(true)`
 	///
 	fn to_web_request_data(
 		target: ServiceTarget,
@@ -170,9 +171,8 @@ impl Adapter for OpenAIRespAdapter {
 			payload.x_insert("reasoning", reasoning_obj)?;
 		}
 
-		// -- Opt-in: request encrypted reasoning content (thought signatures)
-		// when the caller explicitly asks for reasoning content capture.
-		if chat_options.capture_reasoning_content() == Some(true) {
+		// -- Opt-in: request encrypted reasoning content (thought signatures).
+		if chat_options.capture_encrypted_reasoning_content() == Some(true) {
 			payload.x_insert("include", json!(["reasoning.encrypted_content"]))?;
 		}
 
@@ -671,7 +671,49 @@ struct OpenAIRespRequestParts {
 mod tests {
 	use super::*;
 	use crate::adapter::AdapterKind;
-	use crate::chat::ChatMessage;
+	use crate::chat::{ChatMessage, ChatOptions};
+
+	fn test_service_target() -> ServiceTarget {
+		let model = ModelIden::new(AdapterKind::OpenAIResp, "gpt-5-codex");
+		ServiceTarget {
+			model,
+			auth: AuthData::from_single("test-api-key"),
+			endpoint: OpenAIRespAdapter::default_endpoint(),
+		}
+	}
+
+	fn request_payload(chat_options: &ChatOptions) -> Value {
+		let chat_req = ChatRequest::new(vec![ChatMessage::user("Why is the sky blue?")]);
+		let options_set = ChatOptionsSet::default().with_chat_options(Some(chat_options));
+
+		OpenAIRespAdapter::to_web_request_data(test_service_target(), ServiceType::ChatStream, chat_req, options_set)
+			.expect("Should serialize successfully")
+			.payload
+	}
+
+	#[test]
+	fn test_reasoning_capture_does_not_request_encrypted_reasoning_content() {
+		let chat_options = ChatOptions::default()
+			.with_reasoning_effort(ReasoningEffort::Low)
+			.with_capture_reasoning_content(true);
+
+		let payload = request_payload(&chat_options);
+
+		assert_eq!(payload.pointer("/reasoning/summary"), Some(&json!("detailed")));
+		assert_eq!(payload.get("include"), None);
+	}
+
+	#[test]
+	fn test_encrypted_reasoning_capture_requests_encrypted_reasoning_content() {
+		let chat_options = ChatOptions::default()
+			.with_reasoning_effort(ReasoningEffort::Low)
+			.with_capture_reasoning_content(true)
+			.with_capture_encrypted_reasoning_content(true);
+
+		let payload = request_payload(&chat_options);
+
+		assert_eq!(payload.get("include"), Some(&json!(["reasoning.encrypted_content"])));
+	}
 
 	#[test]
 	fn test_message_input_items_include_message_type() {

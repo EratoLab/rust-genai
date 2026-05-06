@@ -27,7 +27,7 @@ pub struct InterStreamEnd {
 	// When `ChatOptions..capture_tool_calls == true`
 	pub captured_tool_calls: Option<Vec<crate::chat::ToolCall>>,
 
-	// When `ChatOptions..capture_thought_signatures == true` (implied or explicit)
+	// When `ChatOptions.capture_encrypted_reasoning_content == true`
 	pub captured_thought_signatures: Option<Vec<String>>,
 
 	// Response ID for stateful sessions (OpenAI Responses API).

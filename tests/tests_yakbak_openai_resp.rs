@@ -66,6 +66,7 @@ async fn test_yakbak_openai_resp_reasoning_stream() -> TestResult<()> {
 		.with_reasoning_effort(ReasoningEffort::Low)
 		.with_capture_content(true)
 		.with_capture_reasoning_content(true)
+		.with_capture_encrypted_reasoning_content(true)
 		.with_capture_usage(true);
 
 	let stream_res = client

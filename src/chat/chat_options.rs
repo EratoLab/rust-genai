@@ -40,6 +40,9 @@ pub struct ChatOptions {
 	/// (streaming) Concatenate reasoning chunks; available in `StreamEnd.captured_reasoning_content`.
 	pub capture_reasoning_content: Option<bool>,
 
+	/// (streaming) Capture encrypted provider-native reasoning content when available.
+	pub capture_encrypted_reasoning_content: Option<bool>,
+
 	/// (streaming) Collect tool calls; available in `StreamEnd.captured_tool_calls`.
 	pub capture_tool_calls: Option<bool>,
 
@@ -113,6 +116,12 @@ impl ChatOptions {
 	/// Enables or disables capturing concatenated reasoning content in streaming mode.
 	pub fn with_capture_reasoning_content(mut self, value: bool) -> Self {
 		self.capture_reasoning_content = Some(value);
+		self
+	}
+
+	/// Enables or disables capturing encrypted provider-native reasoning content.
+	pub fn with_capture_encrypted_reasoning_content(mut self, value: bool) -> Self {
+		self.capture_encrypted_reasoning_content = Some(value);
 		self
 	}
 
@@ -516,6 +525,12 @@ impl ChatOptionsSet<'_, '_> {
 		self.chat
 			.and_then(|chat| chat.capture_reasoning_content)
 			.or_else(|| self.client.and_then(|client| client.capture_reasoning_content))
+	}
+
+	pub fn capture_encrypted_reasoning_content(&self) -> Option<bool> {
+		self.chat
+			.and_then(|chat| chat.capture_encrypted_reasoning_content)
+			.or_else(|| self.client.and_then(|client| client.capture_encrypted_reasoning_content))
 	}
 
 	pub fn capture_tool_calls(&self) -> Option<bool> {
