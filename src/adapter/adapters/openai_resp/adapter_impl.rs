@@ -593,13 +593,8 @@ impl OpenAIRespAdapter {
 			config,
 		} = tool;
 
-		let name = match name {
-			ToolName::WebSearch => "web_search".to_string(),
-			ToolName::Custom(name) => name,
-		};
-
-		let tool_value = match name.as_ref() {
-			"web_search" => {
+		let tool_value = match name {
+			ToolName::WebSearch => {
 				let mut tool_value = json!({"type": "web_search"});
 				match config {
 					Some(ToolConfig::WebSearch(_ws_config)) => {
@@ -615,7 +610,7 @@ impl OpenAIRespAdapter {
 				};
 				tool_value
 			}
-			name => {
+			ToolName::Custom(name) => {
 				let strict = strict;
 				let mut parameters = schema;
 
@@ -671,7 +666,7 @@ struct OpenAIRespRequestParts {
 mod tests {
 	use super::*;
 	use crate::adapter::AdapterKind;
-	use crate::chat::{ChatMessage, ChatOptions};
+	use crate::chat::{ChatMessage, ChatOptions, Tool};
 
 	fn test_service_target() -> ServiceTarget {
 		let model = ModelIden::new(AdapterKind::OpenAIResp, "gpt-5-codex");
@@ -735,6 +730,84 @@ mod tests {
 				"Message input item should include type=message: {item:?}"
 			);
 		}
+	}
+
+	#[test]
+	fn test_custom_web_search_tool_is_not_rewritten_as_builtin() {
+		let tool = Tool::new("web_search").with_schema(json!({
+			"type": "object",
+			"properties": {
+				"query": { "type": "string" }
+			},
+			"required": ["query"]
+		}));
+
+		let value = OpenAIRespAdapter::tool_to_openai_tool(tool).expect("Should serialize successfully");
+
+		assert_eq!(
+			value,
+			json!({
+				"type": "function",
+				"name": "web_search",
+				"description": null,
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"query": { "type": "string" }
+					},
+					"required": ["query"]
+				},
+				"strict": false
+			})
+		);
+	}
+
+	#[test]
+	fn test_default_request_with_custom_web_search_tool_is_not_rewritten_as_builtin() {
+		let chat_req = ChatRequest::from_user("Search for project docs").append_tool(
+			Tool::new("web_search")
+				.with_description("Search internal project docs")
+				.with_schema(json!({
+					"type": "object",
+					"properties": {
+						"query": { "type": "string" }
+					},
+					"required": ["query"]
+				})),
+		);
+
+		let web_req = OpenAIRespAdapter::to_web_request_data(
+			test_service_target(),
+			ServiceType::Chat,
+			chat_req,
+			ChatOptionsSet::default(),
+		)
+		.expect("Should serialize successfully");
+
+		assert_eq!(
+			web_req.payload.pointer("/tools/0"),
+			Some(&json!({
+				"type": "function",
+				"name": "web_search",
+				"description": "Search internal project docs",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"query": { "type": "string" }
+					},
+					"required": ["query"]
+				},
+				"strict": false
+			}))
+		);
+	}
+
+	#[test]
+	fn test_builtin_web_search_tool_uses_openai_builtin() {
+		let value =
+			OpenAIRespAdapter::tool_to_openai_tool(Tool::new_web_search()).expect("Should serialize successfully");
+
+		assert_eq!(value, json!({"type": "web_search"}));
 	}
 
 	/// Test that assistant message text content uses "output_text" type (not "input_text").

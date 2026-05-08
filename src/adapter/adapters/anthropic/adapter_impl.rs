@@ -810,49 +810,37 @@ impl AnthropicAdapter {
 			..
 		} = tool;
 
-		let name = match name {
-			ToolName::WebSearch => "web_search".to_string(),
-			ToolName::Custom(name) => name,
+		let mut tool_value = match name {
+			ToolName::WebSearch => json!({"name": "web_search", "type": "web_search_20250305"}),
+			ToolName::Custom(name) => {
+				let mut tool_value = json!({"name": name});
+				tool_value.x_insert("input_schema", schema)?;
+				if let Some(description) = description {
+					// TODO: need to handle error
+					let _ = tool_value.x_insert("description", description);
+				}
+				return Ok(tool_value);
+			}
 		};
 
-		let mut tool_value = json!({"name": name});
-
-		// -- Add type for builtin tool
-		#[allow(clippy::single_match)] // will have more
-		match name.as_str() {
-			"web_search" => {
-				tool_value.x_insert("type", "web_search_20250305")?;
-			}
-			_ => (),
-		}
-
-		// NOTE: Fo now, if tool_value.type then, assume bultin and set config as propertie
-		if tool_value.get("type").is_some() {
-			if let Some(config) = config {
-				match config {
-					ToolConfig::WebSearch(config) => {
-						if let Some(max_uses) = config.max_uses {
-							let _ = tool_value.x_insert("max_uses", max_uses);
-						}
-						if let Some(allowed_domains) = config.allowed_domains {
-							let _ = tool_value.x_insert("allowed_domains", allowed_domains);
-						}
-						if let Some(blocked_domains) = config.blocked_domains {
-							let _ = tool_value.x_insert("blocked_domains", blocked_domains);
-						}
+		if let Some(config) = config {
+			match config {
+				ToolConfig::WebSearch(config) => {
+					if let Some(max_uses) = config.max_uses {
+						let _ = tool_value.x_insert("max_uses", max_uses);
 					}
-					// if custom, we assume we flatten the config properties since we are in a builtin
-					ToolConfig::Custom(config) => {
-						// NOTE: For now, ignore if not object
-						tool_value.x_merge(config)?;
+					if let Some(allowed_domains) = config.allowed_domains {
+						let _ = tool_value.x_insert("allowed_domains", allowed_domains);
+					}
+					if let Some(blocked_domains) = config.blocked_domains {
+						let _ = tool_value.x_insert("blocked_domains", blocked_domains);
 					}
 				}
-			}
-		} else {
-			tool_value.x_insert("input_schema", schema)?;
-			if let Some(description) = description {
-				// TODO: need to handle error
-				let _ = tool_value.x_insert("description", description);
+				// if custom, we assume we flatten the config properties since we are in a builtin
+				ToolConfig::Custom(config) => {
+					// NOTE: For now, ignore if not object
+					tool_value.x_merge(config)?;
+				}
 			}
 		}
 
@@ -956,7 +944,7 @@ mod tests {
 	use super::*;
 	use crate::ServiceTarget;
 	use crate::adapter::{Adapter, ServiceType};
-	use crate::chat::{ChatOptions, ChatRequest, JsonSpec};
+	use crate::chat::{ChatOptions, ChatRequest, JsonSpec, Tool};
 	use crate::resolver::AuthData;
 
 	/// Regression guard: when both `reasoning_effort` and `JsonSpec` response format are set
@@ -1001,6 +989,44 @@ mod tests {
 			Some("json_schema"),
 			"format.type must be present in output_config"
 		);
+	}
+
+	#[test]
+	fn test_custom_web_search_tool_is_not_rewritten_as_builtin() {
+		let tool = Tool::new("web_search")
+			.with_description("Search through local indexes")
+			.with_schema(json!({
+				"type": "object",
+				"properties": {
+					"query": { "type": "string" }
+				},
+				"required": ["query"]
+			}));
+
+		let value = AnthropicAdapter::tool_to_anthropic_tool(tool).expect("Should serialize successfully");
+
+		assert_eq!(
+			value,
+			json!({
+				"name": "web_search",
+				"input_schema": {
+					"type": "object",
+					"properties": {
+						"query": { "type": "string" }
+					},
+					"required": ["query"]
+				},
+				"description": "Search through local indexes"
+			})
+		);
+	}
+
+	#[test]
+	fn test_builtin_web_search_tool_uses_anthropic_builtin() {
+		let value =
+			AnthropicAdapter::tool_to_anthropic_tool(Tool::new_web_search()).expect("Should serialize successfully");
+
+		assert_eq!(value, json!({"name": "web_search", "type": "web_search_20250305"}));
 	}
 
 	#[test]
