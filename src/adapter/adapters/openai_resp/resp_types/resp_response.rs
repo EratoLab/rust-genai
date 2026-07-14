@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::{serde_as, skip_serializing_none};
 
+fn default_response_status() -> String {
+	"completed".to_string()
+}
+
 /// DOC: https://platform.openai.com/docs/api-reference/responses/object
 ///
 /// NOTE: Not all OpenAI Responses Response properties have been set in this struct.
@@ -15,6 +19,7 @@ pub struct RespResponse {
 	pub id: String,
 
 	/// The status of the response generation. One of completed, failed, in_progress, cancelled, queued, or incomplete.
+	#[serde(default = "default_response_status")]
 	pub status: String,
 
 	/// {code: String, message: string}
@@ -30,4 +35,31 @@ pub struct RespResponse {
 	pub output: Vec<Value>,
 
 	pub usage: Option<RespUsage>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use serde_json::json;
+
+	#[test]
+	fn response_without_status_defaults_to_completed() {
+		let response: RespResponse = serde_json::from_value(json!({
+			"id": "msg_011Cd1jKFkLVE1QPgvXNsmUG",
+			"error": null,
+			"max_output_tokens": null,
+			"model": "claude-opus-4-8",
+			"output": [{
+				"type": "function_call",
+				"call_id": "toolu_01UmvRQFrZEoyiPTcQDznGeK",
+				"name": "linkup-search",
+				"arguments": "{\"query\":\"example\"}"
+			}],
+			"usage": null
+		}))
+		.expect("response without status should deserialize");
+
+		assert_eq!(response.status, "completed");
+		assert_eq!(response.output.len(), 1);
+	}
 }
